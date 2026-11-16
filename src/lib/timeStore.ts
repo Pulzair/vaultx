@@ -1,8 +1,12 @@
-// Time tracking: one running timer at a time (stopwatch or pomodoro), plus the
-// log of finished entries. Shared by the rail widget, Tasks and Calendar.
+// Time tracking: one running timer at a time (stopwatch, pomodoro or break),
+// plus the log of finished entries. Shared by the rail widget, Tasks, Calendar
+// and the Time statistics window.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, uid } from "./api";
-import { parseLocal } from "./dates";
+import { parseLocal, ymd } from "./dates";
+import { notify } from "./notify";
+import { setNoise, type NoiseKind } from "./noise";
+import { toastError } from "./toast";
 import type { Task, TimeEntry } from "./types";
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -27,7 +31,21 @@ export function fmtClock(sec: number): string {
   return h ? `${h}:${pad(m)}:${pad(s % 60)}` : `${pad(m)}:${pad(s % 60)}`;
 }
 
-/** Short two-tone chime when a pomodoro finishes (no plugin needed). */
+/** Focus entries only (breaks excluded). */
+export const isFocus = (e: TimeEntry) => e.mode !== "break";
+
+export interface FocusSettings {
+  pomoMin: number;
+  breakMin: number;
+  longBreakMin: number;
+  longEvery: number;
+  autoBreak: boolean;
+  noise: NoiseKind;
+  dailyGoalMin: number;
+}
+const DEFAULTS: FocusSettings = { pomoMin: 25, breakMin: 5, longBreakMin: 15, longEvery: 4, autoBreak: true, noise: "off", dailyGoalMin: 120 };
+
+/** Short two-tone chime (no plugin needed). */
 function chime() {
   try {
     const ctx = new AudioContext();
@@ -42,7 +60,7 @@ function chime() {
       o.stop(ctx.currentTime + i * 0.25 + 0.45);
     });
   } catch {
-    /* audio unavailable - ignore */
+    /* audio unavailable */
   }
 }
 
@@ -52,22 +70,40 @@ export interface TimeStore {
   /** Ticks every second while a timer runs, for live displays. */
   now: Date;
   error: string | null;
+  settings: FocusSettings;
+  setSettings: (s: Partial<FocusSettings>) => void;
   start: (opts: { task?: Task | null; title?: string; mode?: TimeEntry["mode"]; targetMin?: number }) => Promise<void>;
   stop: () => Promise<void>;
+  /** Starts the right break (short / long) after a pomodoro. */
+  startBreak: () => Promise<void>;
   save: (e: TimeEntry) => Promise<void>;
   remove: (id: string) => Promise<void>;
-  /** Total tracked seconds per task id. */
+  /** Total tracked focus seconds per task id. */
   totalForTask: (taskId: string) => number;
+  /** Completed pomodoros today. */
+  pomosToday: number;
 }
 
 export function useTimeStore(): TimeStore {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [now, setNow] = useState(new Date());
   const [error, setError] = useState<string | null>(null);
+  const [settings, setSettingsState] = useState<FocusSettings>(DEFAULTS);
   const finishing = useRef(false);
 
   useEffect(() => {
     api.listTimeEntries().then(setEntries).catch((e) => setError(String(e)));
+    api.getSettings().then((s) => {
+      if (s.focus_settings) setSettingsState({ ...DEFAULTS, ...JSON.parse(s.focus_settings) });
+    }).catch(() => {});
+  }, []);
+
+  const setSettings = useCallback((p: Partial<FocusSettings>) => {
+    setSettingsState((prev) => {
+      const next = { ...prev, ...p };
+      api.setSetting("focus_settings", JSON.stringify(next)).catch(toastError);
+      return next;
+    });
   }, []);
 
   const running = entries.find((e) => e.endAt === null) ?? null;
@@ -77,6 +113,11 @@ export function useTimeStore(): TimeStore {
     const t = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(t);
   }, [running]);
+
+  // Background noise plays only during focus sessions.
+  useEffect(() => {
+    setNoise(running && running.mode !== "break" ? settings.noise : "off");
+  }, [running, settings.noise]);
 
   const save = useCallback(async (e: TimeEntry) => {
     setEntries((prev) => {
@@ -89,10 +130,7 @@ export function useTimeStore(): TimeStore {
     await api.saveTimeEntry(e).catch((err) => setError(String(err)));
   }, []);
 
-  const stopEntry = useCallback(
-    async (e: TimeEntry, at: Date) => save({ ...e, endAt: localStamp(at) }),
-    [save],
-  );
+  const stopEntry = useCallback((e: TimeEntry, at: Date) => save({ ...e, endAt: localStamp(at) }), [save]);
 
   const remove = useCallback(async (id: string) => {
     setEntries((prev) => prev.filter((e) => e.id !== id));
@@ -108,39 +146,61 @@ export function useTimeStore(): TimeStore {
 
   const start: TimeStore["start"] = useCallback(
     async ({ task = null, title, mode = "stopwatch", targetMin }) => {
-      // Only one timer runs at a time; starting a new one ends the old.
       await stop();
       await save({
         id: uid(),
         taskId: task?.id ?? null,
-        title: title ?? task?.title ?? "Focus",
+        title: title ?? task?.title ?? (mode === "break" ? "Break" : "Focus"),
         startAt: localStamp(new Date()),
         endAt: null,
         mode,
-        targetMin: mode === "pomodoro" ? targetMin ?? 25 : null,
+        targetMin: mode === "stopwatch" ? null : targetMin ?? (mode === "break" ? settings.breakMin : settings.pomoMin),
         note: "",
       });
       setNow(new Date());
     },
-    [stop, save],
+    [stop, save, settings.breakMin, settings.pomoMin],
   );
 
-  // A pomodoro stops itself at its target, ending exactly on time even if
-  // the app was closed meanwhile.
+  const today = ymd(new Date());
+  const pomosToday = entries.filter((e) => e.mode === "pomodoro" && e.endAt && e.startAt.slice(0, 10) === today
+    && entrySeconds(e) >= (e.targetMin ?? 25) * 60 - 5).length;
+
+  const startBreak = useCallback(async () => {
+    const long = settings.longEvery > 0 && (pomosToday % settings.longEvery === 0) && pomosToday > 0;
+    await start({ mode: "break", title: long ? "Long break" : "Break", targetMin: long ? settings.longBreakMin : settings.breakMin });
+  }, [settings, pomosToday, start]);
+
+  // Pomodoros and breaks stop themselves at their target, ending exactly on
+  // time even if the app was closed meanwhile.
   useEffect(() => {
-    if (!running || running.mode !== "pomodoro" || !running.targetMin || finishing.current) return;
+    if (!running || running.mode === "stopwatch" || !running.targetMin || finishing.current) return;
     const due = new Date(parseLocal(running.startAt).getTime() + running.targetMin * 60000);
-    if (now >= due) {
-      finishing.current = true;
-      stopEntry(running, due).finally(() => (finishing.current = false));
+    if (now < due) return;
+    finishing.current = true;
+    const wasBreak = running.mode === "break";
+    const late = now.getTime() - due.getTime() > 60000; // finished while the app was closed
+    stopEntry(running, due).then(async () => {
+      if (late) return;
       chime();
-    }
-  }, [now, running, stopEntry]);
+      if (wasBreak) {
+        notify("Break over", "Ready for the next focus session?");
+      } else {
+        notify("Pomodoro done", running.title);
+        if (settings.autoBreak) {
+          // pomosToday has not refreshed yet, so count this one in.
+          const n = pomosToday + 1;
+          const long = settings.longEvery > 0 && n % settings.longEvery === 0;
+          await start({ mode: "break", title: long ? "Long break" : "Break", targetMin: long ? settings.longBreakMin : settings.breakMin });
+        }
+      }
+    }).finally(() => (finishing.current = false));
+  }, [now, running, stopEntry, settings, pomosToday, start]);
 
   const totalForTask = useCallback(
-    (taskId: string) => entries.filter((e) => e.taskId === taskId).reduce((s, e) => s + entrySeconds(e, now), 0),
+    (taskId: string) => entries.filter((e) => e.taskId === taskId && isFocus(e)).reduce((s, e) => s + entrySeconds(e, now), 0),
     [entries, now],
   );
 
-  return { entries, running, now, error, start, stop, save, remove, totalForTask };
+  return { entries, running, now, error, settings, setSettings, start, stop, startBreak, save, remove, totalForTask, pomosToday };
 }

@@ -3,6 +3,25 @@
 All notable changes to VaultX. Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 The current build state and next steps are in [HANDOFF.md](HANDOFF.md).
 
+## [Unreleased] - 0.0.3
+
+### Fixed
+- Calendar (and any tall view) no longer stretches the window past the screen; the week grid scrolls to 23:00.
+
+### Added
+- **Tasks (TickTick-style):** list colours, folders and archive; board (kanban) view with sections; Tomorrow smart list; custom saved filters; tag colours and rename; checklist subtasks; repeat rules (daily / weekly on chosen days / monthly / yearly, interval, from completion, end date or count); multiple reminders with desktop notifications; won't-do; pin; duplicate; estimate in pomodoros; Trash with restore and empty; Summary report (copy or save as note); sort and group; search; right-click menus; drag tasks onto lists; quick-add `~List`, `^Section`, `every ...`.
+- **Calendar:** day, 3-day and agenda views; list colours on blocks; Unscheduled panel with drag-onto-grid scheduling.
+- **Focus:** configurable pomodoro, automatic short/long breaks, generated white/pink/brown noise, daily focus goal, end-of-session notifications.
+- **Time window:** focus statistics by day/week/month/year - totals and change vs previous period, sessions, full pomodoros, daily average, best day, longest session, streak, goal days, trend chart, breakdown by list/tag/task, timeline, best-focus-hours heatmap, planned vs actual, records, CSV export.
+- **Habits:** check-ins, counted goals, weekday or N-per-week schedules, sections, streaks, 30-day rate, month calendar, reminders, archive, templates.
+- **Diet:** meal log, foods library, quick add, servings, calorie equation with exercise, macro targets, energy split, water, body weight, 30-day trends.
+- **Training:** tabs (Overview, Activities, Wellness, Records, Setup); full activity detail with Garmin Training Effect/load/VO2max, exact stream TRIMP, aerobic decoupling, efficiency factor, HR zones, stream charts and laps; Garmin activity detail + daily wellness sync (sleep, HRV, resting HR, Body Battery, stress, steps); FIT streams and laps kept on import; personal records; yearly/monthly totals; acute:chronic ratio; methodology and accuracy notes.
+- **Data:** full versioned backup/import that works across versions, CSV export per table, opt-in read-only local HTTP API with token, `VAULTX_DATA_DIR` portable mode.
+- Ctrl+K command palette, toasts with undo, last-module memory.
+
+### Changed
+- Database gains new columns through in-place migrations; existing v0.0.1/v0.0.2 data is kept.
+
 ## [0.0.2] - 2026-11-16
 
 ### Added

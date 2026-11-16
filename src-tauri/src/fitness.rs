@@ -15,7 +15,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use serde_json::{json, Value as Json};
 use tauri::{AppHandle, Manager, State};
 
-use crate::db::{upsert_activities, Activity};
+use crate::db::{merge_daily_metrics, save_activity_detail, upsert_activities, Activity};
 use crate::{AppState, StrErr};
 
 // ---------- FIT import ----------
@@ -37,12 +37,80 @@ fn fit_f64(v: &fitparser::Value) -> Option<f64> {
     }
 }
 
-fn parse_fit(name: &str, bytes: &[u8]) -> Result<Vec<Activity>, String> {
+fn parse_fit(name: &str, bytes: &[u8]) -> Result<Vec<(Activity, Json, Json)>, String> {
+    use fitparser::profile::MesgNum;
     let records = fitparser::from_bytes(bytes).map_err(|e| format!("{name}: {e}"))?;
+
+    // Time series from `record` messages and laps from `lap` messages.
+    let mut t0: Option<i64> = None;
+    let (mut ts, mut hr, mut spd, mut alt, mut cad, mut pwr, mut dist) =
+        (vec![], vec![], vec![], vec![], vec![], vec![], vec![]);
+    let mut laps = Vec::new();
+    for rec in &records {
+        match rec.kind() {
+            MesgNum::Record => {
+                let mut row: std::collections::HashMap<&str, f64> = Default::default();
+                let mut stamp = None;
+                for f in rec.fields() {
+                    if f.name() == "timestamp" {
+                        if let fitparser::Value::Timestamp(t) = f.value() {
+                            stamp = Some(t.timestamp());
+                        }
+                    } else if let Some(x) = fit_f64(f.value()) {
+                        row.insert(f.name(), x);
+                    }
+                }
+                let Some(s) = stamp else { continue };
+                let base = *t0.get_or_insert(s);
+                let get = |a: &str, b: &str| row.get(a).or_else(|| row.get(b)).copied();
+                ts.push(json!(s - base));
+                hr.push(json!(row.get("heart_rate")));
+                spd.push(json!(get("enhanced_speed", "speed")));
+                alt.push(json!(get("enhanced_altitude", "altitude")));
+                cad.push(json!(row.get("cadence")));
+                pwr.push(json!(row.get("power")));
+                dist.push(json!(row.get("distance")));
+            }
+            MesgNum::Lap => {
+                let mut lap = serde_json::Map::new();
+                for f in rec.fields() {
+                    let key = match f.name() {
+                        "total_timer_time" => "durationS",
+                        "total_distance" => "distanceM",
+                        "avg_heart_rate" => "avgHr",
+                        "max_heart_rate" => "maxHr",
+                        "enhanced_avg_speed" | "avg_speed" => "avgSpeed",
+                        "total_ascent" => "ascentM",
+                        "avg_cadence" => "cadence",
+                        "avg_power" => "avgPower",
+                        _ => continue,
+                    };
+                    if let Some(x) = fit_f64(f.value()) {
+                        lap.entry(key).or_insert(json!(x));
+                    }
+                }
+                laps.push(Json::Object(lap));
+            }
+            _ => {}
+        }
+    }
+    // Keep charts light: at most ~1500 points.
+    let step = (ts.len() / 1500).max(1);
+    let thin = |v: &Vec<Json>| -> Vec<Json> { v.iter().step_by(step).cloned().collect() };
+    let any = |v: &Vec<Json>| v.iter().any(|x| !x.is_null());
+    let mut samples = serde_json::Map::new();
+    samples.insert("t".into(), json!(thin(&ts)));
+    for (k, v) in [("hr", &hr), ("speed", &spd), ("alt", &alt), ("cad", &cad), ("pwr", &pwr), ("dist", &dist)] {
+        if any(v) {
+            samples.insert(k.into(), json!(thin(v)));
+        }
+    }
+    let detail = json!({ "samples": samples, "laps": laps });
+
     let mut out = Vec::new();
-    for rec in records.iter().filter(|r| r.kind() == fitparser::profile::MesgNum::Session) {
+    for rec in records.iter().filter(|r| r.kind() == MesgNum::Session) {
         let mut a = Activity {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: String::new(),
             source: "fit".into(),
             external_id: String::new(),
             sport: "other".into(),
@@ -55,10 +123,16 @@ fn parse_fit(name: &str, bytes: &[u8]) -> Result<Vec<Activity>, String> {
             elevation_m: None,
             calories: None,
             avg_power: None,
+            extra: None,
         };
         let mut sub_sport = String::new();
+        // Every numeric session field is kept as `raw` so extract_extra can use it.
+        let mut raw = serde_json::Map::new();
         for f in rec.fields() {
             let v = f.value();
+            if let Some(x) = fit_f64(v) {
+                raw.insert(f.name().to_string(), json!(x));
+            }
             match f.name() {
                 "start_time" => {
                     if let fitparser::Value::Timestamp(t) = v {
@@ -80,10 +154,12 @@ fn parse_fit(name: &str, bytes: &[u8]) -> Result<Vec<Activity>, String> {
         if !sub_sport.is_empty() && sub_sport != "generic" {
             a.sport = format!("{}_{}", a.sport, sub_sport);
         }
-        // Same file imported twice should update, not duplicate.
+        // Same file imported twice should update, not duplicate; the id is
+        // derived from it so stored details stay attached.
         a.external_id = format!("{}#{}", a.start_time, a.sport);
+        a.id = format!("fit-{}", a.external_id.replace([':', '#'], "-"));
         if !a.start_time.is_empty() {
-            out.push(a);
+            out.push((a, Json::Object(raw), detail.clone()));
         }
     }
     if out.is_empty() {
@@ -94,10 +170,23 @@ fn parse_fit(name: &str, bytes: &[u8]) -> Result<Vec<Activity>, String> {
 
 #[tauri::command]
 pub fn import_fit(state: State<AppState>, name: String, bytes: Vec<u8>) -> Result<usize, String> {
-    let acts = parse_fit(&name, &bytes)?;
-    let raw = vec![None; acts.len()];
+    let parsed = parse_fit(&name, &bytes)?;
+    let acts: Vec<Activity> = parsed.iter().map(|p| p.0.clone()).collect();
+    let raw: Vec<Option<String>> = parsed.iter().map(|p| Some(p.1.to_string())).collect();
     let mut db = state.db.lock().unwrap();
-    upsert_activities(&mut db, &acts, &raw).str_err()
+    let n = upsert_activities(&mut db, &acts, &raw).str_err()?;
+    for (a, _, detail) in &parsed {
+        // Look up the stored id (an older import may have used another id).
+        let id: String = db
+            .query_row(
+                "SELECT id FROM activities WHERE source = 'fit' AND external_id = ?1",
+                [&a.external_id],
+                |r| r.get(0),
+            )
+            .str_err()?;
+        save_activity_detail(&db, &id, detail).str_err()?;
+    }
+    Ok(n)
 }
 
 // ---------- Garmin bridge ----------
@@ -301,7 +390,49 @@ fn garmin_to_activity(v: &Json) -> Option<Activity> {
         elevation_m: f("elevationGain"),
         calories: f("calories"),
         avg_power: f("avgPower"),
+        extra: None,
     })
+}
+
+/// Detailed samples, laps and HR zones for one Garmin activity. Fetched on
+/// first open, then cached in `activity_details`.
+#[tauri::command]
+pub async fn garmin_activity_detail(app: AppHandle, id: String) -> Result<Json, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let external: String = {
+            let db = state.db.lock().unwrap();
+            db.query_row("SELECT external_id FROM activities WHERE id = ?1 AND source = 'garmin'", [&id], |r| r.get(0))
+                .map_err(|_| "Not a Garmin activity".to_string())?
+        };
+        let resp = with_bridge(&app, &state, |p| p.call(json!({"cmd": "detail", "activityId": external})))?;
+        let detail = resp.get("detail").cloned().unwrap_or(json!({}));
+        let db = state.db.lock().unwrap();
+        save_activity_detail(&db, &id, &detail).str_err()?;
+        Ok(detail)
+    })
+    .await
+    .str_err()?
+}
+
+/// Pulls daily sleep, HRV, resting HR, stress, Body Battery and steps for the
+/// last `days` days into `daily_metrics`.
+#[tauri::command]
+pub async fn garmin_wellness(app: AppHandle, days: u32) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let resp = with_bridge(&app, &state, |p| p.call(json!({"cmd": "wellness", "days": days})))?;
+        let list = resp.get("days").and_then(|a| a.as_array()).cloned().unwrap_or_default();
+        let db = state.db.lock().unwrap();
+        for d in &list {
+            if let Some(date) = d.get("date").and_then(|x| x.as_str()) {
+                merge_daily_metrics(&db, date, d).str_err()?;
+            }
+        }
+        Ok(list.len())
+    })
+    .await
+    .str_err()?
 }
 
 /// Pulls the last `days` days of activities from Garmin Connect into the DB.

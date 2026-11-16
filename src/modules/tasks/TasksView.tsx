@@ -1,93 +1,120 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { uid } from "../../lib/api";
 import { askConfirm, askText } from "../../lib/dialog";
-import { addDays, hm, parseLocal, ymd } from "../../lib/dates";
+import { hm, parseLocal, ymd } from "../../lib/dates";
 import { parseQuickAdd } from "../../lib/quickadd";
+import { describeRecurrence } from "../../lib/recurrence";
 import { newTask, type TaskStore } from "../../lib/taskStore";
+import {
+  groupTasks, inScope, matchesSearch, sortTasks, taskDay, type GroupKey, type Scope, type SmartId, type SortKey,
+} from "../../lib/taskQuery";
 import type { TimeStore } from "../../lib/timeStore";
-import TaskTimer from "../../components/TaskTimer";
-import type { Task } from "../../lib/types";
+import type { Task, TaskFilter, TaskList } from "../../lib/types";
+import { ColorPicker, Dot, MenuItem, MenuLabel, Popover } from "../../components/Menu";
+import TaskDetail from "./TaskDetail";
+import Kanban from "./Kanban";
+import Summary from "./Summary";
+import FilterEditor from "./FilterEditor";
 import "./tasks.css";
 
-type Scope =
-  | { kind: "smart"; id: "today" | "week" | "all" | "done" }
-  | { kind: "list"; id: string }
-  | { kind: "tag"; id: string };
-
-const SMART = [
+const SMART: { id: SmartId; label: string }[] = [
   { id: "today", label: "Today" },
+  { id: "tomorrow", label: "Tomorrow" },
   { id: "week", label: "Next 7 days" },
-  { id: "all", label: "All open" },
+  { id: "all", label: "All" },
+];
+const BOTTOM: { id: SmartId; label: string }[] = [
+  { id: "summary", label: "Summary" },
   { id: "done", label: "Completed" },
-] as const;
+  { id: "wontdo", label: "Won't do" },
+  { id: "trash", label: "Trash" },
+];
 
-const PRIORITY = ["None", "Low", "Medium", "High"];
+type Menu =
+  | { kind: "list"; list: TaskList; x: number; y: number }
+  | { kind: "tag"; tag: string; x: number; y: number }
+  | { kind: "task"; task: Task; x: number; y: number }
+  | null;
 
-function taskDay(t: Task): string | null {
-  return t.startAt ? t.startAt.slice(0, 10) : t.dueDate;
-}
-
-export default function TasksView({ store, time }: { store: TaskStore; time: TimeStore }) {
-  const { lists, tasks, saveTask, deleteTask, saveList, deleteList, error } = store;
+export default function TasksView({ store, time, openTaskId, onOpened }: {
+  store: TaskStore; time: TimeStore; openTaskId?: string | null; onOpened?: () => void;
+}) {
+  const { lists, tasks, filters, tagColors, saveTask, toggleDone, saveList, deleteList } = store;
   const [scope, setScope] = useState<Scope>({ kind: "smart", id: "today" });
   const [selected, setSelected] = useState<string | null>(null);
   const [quick, setQuick] = useState("");
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<SortKey>("date");
+  const [group, setGroup] = useState<GroupKey>("date");
+  const [showDone, setShowDone] = useState(false);
+  const [menu, setMenu] = useState<Menu>(null);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [editingFilter, setEditingFilter] = useState<TaskFilter | null>(null);
 
-  const today = ymd(new Date());
-  const weekEnd = ymd(addDays(new Date(), 7));
-
-  const matches = (t: Task, s: Scope): boolean => {
-    if (s.kind === "list") return t.listId === s.id && !t.done;
-    if (s.kind === "tag") return t.tags.includes(s.id) && !t.done;
-    const day = taskDay(t);
-    switch (s.id) {
-      case "today": return !t.done && !!day && day <= today;
-      case "week": return !t.done && !!day && day <= weekEnd;
-      case "all": return !t.done;
-      case "done": return t.done;
+  // Jump to a task chosen in the command palette.
+  useEffect(() => {
+    if (!openTaskId) return;
+    const t = tasks.find((x) => x.id === openTaskId);
+    if (t) {
+      setScope(t.done ? { kind: "smart", id: "done" } : { kind: "list", id: t.listId });
+      setSelected(t.id);
     }
-  };
+    onOpened?.();
+  }, [openTaskId, tasks, onOpened]);
 
-  const visible = useMemo(() => {
-    const v = tasks.filter((t) => matches(t, scope));
-    return v.sort((a, b) => {
-      if (scope.kind === "smart" && scope.id === "done") return (b.completedAt ?? "").localeCompare(a.completedAt ?? "");
-      const da = taskDay(a) ?? "9999", db = taskDay(b) ?? "9999";
-      return da.localeCompare(db) || (a.startAt ?? "").localeCompare(b.startAt ?? "") || b.priority - a.priority || a.sort - b.sort;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tasks, scope, today, weekEnd]);
+  const activeLists = lists.filter((l) => !l.archived);
+  const archivedLists = lists.filter((l) => l.archived);
+  const folders = useMemo(() => {
+    const m = new Map<string, TaskList[]>();
+    for (const l of activeLists) m.set(l.folder, [...(m.get(l.folder) ?? []), l]);
+    return [...m.entries()].sort(([a], [b]) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b)));
+  }, [activeLists]);
+  const allTags = useMemo(() => [...new Set(tasks.filter((t) => !t.deletedAt).flatMap((t) => t.tags))].sort(), [tasks]);
 
-  const allTags = useMemo(() => [...new Set(tasks.flatMap((t) => t.tags))].sort(), [tasks]);
+  const currentList = scope.kind === "list" ? lists.find((l) => l.id === scope.id) : undefined;
+  const count = (s: Scope) => tasks.filter((t) => !t.done && inScope(t, s, filters, lists)).length;
+
+  const inView = tasks.filter((t) => inScope(t, scope, filters, lists) && matchesSearch(t, search));
+  const openTasks = scope.kind === "list" ? inView.filter((t) => !t.done) : inView;
+  const doneTasks = scope.kind === "list" ? inView.filter((t) => t.done) : [];
+  const groups = groupTasks(sortTasks(openTasks, sort), scope.kind === "list" && group === "list" ? "none" : group, lists);
   const sel = tasks.find((t) => t.id === selected) ?? null;
+
+  const scopeLabel =
+    scope.kind === "smart" ? [...SMART, ...BOTTOM].find((s) => s.id === scope.id)!.label
+    : scope.kind === "list" ? currentList?.name ?? ""
+    : scope.kind === "tag" ? `#${scope.id}`
+    : filters.find((f) => f.id === scope.id)?.name ?? "Filter";
 
   const add = () => {
     if (!quick.trim()) return;
     const p = parseQuickAdd(quick);
-    const listId = scope.kind === "list" ? scope.id : "inbox";
+    const named = p.listName ? lists.find((l) => l.name.toLowerCase() === p.listName!.toLowerCase()) : undefined;
+    const listId = named?.id ?? (scope.kind === "list" ? scope.id : "inbox");
     const tags = scope.kind === "tag" ? [...new Set([...p.tags, scope.id])] : p.tags;
-    // Adding from Today with no date should still land in Today.
-    const dueDate = p.dueDate ?? (scope.kind === "smart" && scope.id === "today" ? today : null);
-    const t = newTask(listId, { ...p, tags, dueDate, title: p.title || quick.trim() });
+    const today = ymd(new Date());
+    const tomorrow = ymd(new Date(Date.now() + 86400000));
+    const dueDate = p.dueDate ?? (scope.kind === "smart" ? (scope.id === "today" ? today : scope.id === "tomorrow" ? tomorrow : null) : null);
+    const t = newTask(listId, {
+      title: p.title || quick.trim(), tags, priority: p.priority, dueDate, startAt: p.startAt, endAt: p.endAt,
+      section: p.section ?? "", recurrence: p.recurrence, reminders: p.startAt ? [0] : [],
+    });
     saveTask(t);
     setQuick("");
   };
 
-  const toggle = (t: Task) =>
-    saveTask({ ...t, done: !t.done, completedAt: t.done ? null : new Date().toISOString() });
-
-  const addList = async () => {
+  const newList = async (folder = "") => {
     const name = await askText("New list name");
-    if (name?.trim()) saveList({ id: uid(), name: name.trim(), color: "", sort: lists.length });
+    if (name?.trim()) {
+      const l: TaskList = { id: uid(), name: name.trim(), color: "", sort: lists.length, folder, archived: false, view: "list", sections: [] };
+      await saveList(l);
+      setScope({ kind: "list", id: l.id });
+    }
   };
 
-  const scopeLabel =
-    scope.kind === "smart" ? SMART.find((s) => s.id === scope.id)!.label
-    : scope.kind === "list" ? lists.find((l) => l.id === scope.id)?.name ?? ""
-    : `#${scope.id}`;
-
   const isActive = (s: Scope) => s.kind === scope.kind && s.id === scope.id;
-  const count = (s: Scope) => tasks.filter((t) => matches(t, s)).length;
+  const nav = (s: Scope) => { setScope(s); setSelected(null); };
+  const canAdd = !(scope.kind === "smart" && ["done", "wontdo", "trash", "summary"].includes(scope.id));
 
   return (
     <>
@@ -95,195 +122,316 @@ export default function TasksView({ store, time }: { store: TaskStore; time: Tim
         <h1>Tasks</h1>
         <span className="sub">{scopeLabel}</span>
         <div className="grow" />
-        {scope.kind === "list" && scope.id !== "inbox" && (
-          <>
-            <button className="btn ghost" onClick={async () => {
-              const l = lists.find((x) => x.id === scope.id)!;
-              const name = await askText("Rename list", l.name);
-              if (name?.trim()) saveList({ ...l, name: name.trim() });
-            }}>Rename list</button>
-            <button className="btn ghost danger" onClick={async () => {
-              if (await askConfirm("Delete this list? Its tasks move to Inbox.", "Delete list")) {
-                deleteList(scope.id);
-                setScope({ kind: "list", id: "inbox" });
-              }
-            }}>Delete list</button>
-          </>
+        <input className="input" style={{ width: 180 }} placeholder="Search tasks" value={search} onChange={(e) => setSearch(e.target.value)} />
+        {currentList && (
+          <div className="seg">
+            <button aria-pressed={currentList.view === "list"} onClick={() => saveList({ ...currentList, view: "list" })}>List</button>
+            <button aria-pressed={currentList.view === "kanban"} onClick={() => saveList({ ...currentList, view: "kanban" })}>Board</button>
+          </div>
         )}
+        {currentList?.view !== "kanban" && !(scope.kind === "smart" && ["summary", "trash"].includes(scope.id)) ? (
+          <>
+            <select className="select" value={sort} onChange={(e) => setSort(e.target.value as SortKey)} title="Sort">
+              <option value="date">Sort: date</option>
+              <option value="priority">Sort: priority</option>
+              <option value="title">Sort: title</option>
+              <option value="created">Sort: newest</option>
+              <option value="custom">Sort: manual</option>
+            </select>
+            <select className="select" value={group} onChange={(e) => setGroup(e.target.value as GroupKey)} title="Group">
+              <option value="date">Group: date</option>
+              <option value="list">Group: list</option>
+              <option value="priority">Group: priority</option>
+              <option value="tag">Group: tag</option>
+              <option value="none">No groups</option>
+            </select>
+          </>
+        ) : null}
       </div>
-      {error && <div className="error-line">{error}</div>}
       <div className="body">
-        <div className="pane" style={{ width: 200 }}>
+        <div className="pane" style={{ width: 212 }}>
           <div className="scroll" style={{ flex: 1, paddingBottom: 12 }}>
             <div style={{ height: 8 }} />
             {SMART.map((s) => {
               const sc: Scope = { kind: "smart", id: s.id };
               return (
-                <div key={s.id} className={`list-item ${isActive(sc) ? "active" : ""}`} onClick={() => setScope(sc)}>
-                  {s.label}<span className="count">{s.id === "done" ? "" : count(sc) || ""}</span>
+                <div key={s.id} className={`list-item ${isActive(sc) ? "active" : ""}`} onClick={() => nav(sc)}>
+                  {s.label}<span className="count">{count(sc) || ""}</span>
                 </div>
               );
             })}
+
             <div className="section-head">
               <span className="label">Lists</span>
-              <button className="btn ghost" style={{ padding: "0 6px" }} onClick={addList} title="New list">+</button>
+              <button className="btn ghost tiny" onClick={() => newList()} title="New list">+</button>
             </div>
-            {lists.map((l) => {
-              const sc: Scope = { kind: "list", id: l.id };
+            {folders.map(([folder, ls]) => (
+              <div key={folder || "~"}>
+                {folder && (
+                  <div className="list-item folder" onClick={() => setCollapsed({ ...collapsed, [folder]: !collapsed[folder] })}>
+                    <span className="mono muted" style={{ width: 10 }}>{collapsed[folder] ? "+" : "-"}</span>{folder}
+                    <span className="count">{ls.reduce((n, l) => n + count({ kind: "list", id: l.id }), 0) || ""}</span>
+                  </div>
+                )}
+                {!collapsed[folder] && ls.map((l) => {
+                  const sc: Scope = { kind: "list", id: l.id };
+                  return (
+                    <div key={l.id} className={`list-item ${isActive(sc) ? "active" : ""}`} style={{ paddingLeft: folder ? 28 : 14 }}
+                      onClick={() => nav(sc)}
+                      onContextMenu={(e) => { e.preventDefault(); setMenu({ kind: "list", list: l, x: e.clientX, y: e.clientY }); }}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => { const id = e.dataTransfer.getData("text/task"); const t = tasks.find((x) => x.id === id); if (t) saveTask({ ...t, listId: l.id, section: "" }); }}>
+                      <Dot color={l.color} />{l.name}<span className="count">{count(sc) || ""}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+
+            <div className="section-head">
+              <span className="label">Filters</span>
+              <button className="btn ghost tiny" title="New filter"
+                onClick={() => setEditingFilter({ id: uid(), name: "", lists: [], tags: [], priorities: [], when: "any", text: "" })}>+</button>
+            </div>
+            {filters.map((f) => {
+              const sc: Scope = { kind: "filter", id: f.id };
               return (
-                <div key={l.id} className={`list-item ${isActive(sc) ? "active" : ""}`} onClick={() => setScope(sc)}>
-                  {l.name}<span className="count">{count(sc) || ""}</span>
+                <div key={f.id} className={`list-item ${isActive(sc) ? "active" : ""}`} onClick={() => nav(sc)}
+                  onDoubleClick={() => setEditingFilter(f)} title="Double-click to edit">
+                  <span className="mono muted">≡</span>{f.name}<span className="count">{count(sc) || ""}</span>
                 </div>
               );
             })}
+
             {allTags.length > 0 && <div className="section-head"><span className="label">Tags</span></div>}
             {allTags.map((tag) => {
               const sc: Scope = { kind: "tag", id: tag };
               return (
-                <div key={tag} className={`list-item ${isActive(sc) ? "active" : ""}`} onClick={() => setScope(sc)}>
-                  <span className="tag">{tag}</span><span className="count">{count(sc) || ""}</span>
+                <div key={tag} className={`list-item ${isActive(sc) ? "active" : ""}`} onClick={() => nav(sc)}
+                  onContextMenu={(e) => { e.preventDefault(); setMenu({ kind: "tag", tag, x: e.clientX, y: e.clientY }); }}>
+                  <Dot color={tagColors[tag] ?? ""} /><span>{tag}</span><span className="count">{count(sc) || ""}</span>
                 </div>
               );
             })}
+
+            <div style={{ height: 10 }} />
+            {BOTTOM.map((s) => {
+              const sc: Scope = { kind: "smart", id: s.id };
+              return (
+                <div key={s.id} className={`list-item muted-item ${isActive(sc) ? "active" : ""}`} onClick={() => nav(sc)}>
+                  {s.label}
+                  {s.id === "trash" && <span className="count">{tasks.filter((t) => t.deletedAt).length || ""}</span>}
+                </div>
+              );
+            })}
+            {archivedLists.length > 0 && (
+              <>
+                <div className="section-head"><span className="label">Archived</span></div>
+                {archivedLists.map((l) => (
+                  <div key={l.id} className={`list-item muted-item ${isActive({ kind: "list", id: l.id }) ? "active" : ""}`}
+                    onClick={() => nav({ kind: "list", id: l.id })}
+                    onContextMenu={(e) => { e.preventDefault(); setMenu({ kind: "list", list: l, x: e.clientX, y: e.clientY }); }}>
+                    <Dot color={l.color} />{l.name}
+                  </div>
+                ))}
+              </>
+            )}
+            <div className="muted" style={{ fontSize: 11, padding: "12px 14px 0" }}>Right-click a list or tag for colour and options.</div>
           </div>
         </div>
 
         <div className="pane" style={{ flex: 1, minWidth: 0 }}>
-          {!(scope.kind === "smart" && scope.id === "done") && (
+          {canAdd && (
             <div className="quick">
-              <input className="input" placeholder="Add a task - e.g. Maths homework mon 1pm-3pm #school !2"
+              <input className="input" placeholder="Add task - e.g. Maths homework mon 1pm-3pm #school !2 ~School every week"
                 value={quick} onChange={(e) => setQuick(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && add()} />
-              {quick && <QuickPreview text={quick} />}
+              {quick && <QuickPreview text={quick} lists={lists} />}
             </div>
           )}
-          <div className="scroll" style={{ flex: 1 }}>
-            {visible.map((t) => (
-              <TaskRow key={t.id} t={t} active={t.id === selected} today={today} tracking={time.running?.taskId === t.id}
-                listName={scope.kind !== "list" ? lists.find((l) => l.id === t.listId)?.name : undefined}
-                onSelect={() => setSelected(t.id)} onToggle={() => toggle(t)} />
-            ))}
-            {!visible.length && <div className="empty">Nothing here.</div>}
-          </div>
-        </div>
-
-        <div className="pane" style={{ width: 320, borderRight: 0 }}>
-          {sel ? (
-            <TaskDetail key={sel.id} t={sel} store={store} time={time} onDelete={() => { deleteTask(sel.id); setSelected(null); }} />
+          {scope.kind === "smart" && scope.id === "summary" ? (
+            <Summary store={store} />
+          ) : currentList?.view === "kanban" ? (
+            <Kanban list={currentList} tasks={inView} store={store} selected={selected} onSelect={setSelected} />
           ) : (
-            <div className="empty">Select a task to see its details and note.</div>
+            <div className="scroll" style={{ flex: 1 }}>
+              {scope.kind === "smart" && scope.id === "trash" && inView.length > 0 && (
+                <div className="row" style={{ padding: "8px 14px", borderBottom: "1px solid var(--line)" }}>
+                  <span className="muted" style={{ flex: 1 }}>Deleted tasks stay here until you empty the trash.</span>
+                  <button className="btn danger" onClick={async () => {
+                    if (await askConfirm(`Permanently delete ${inView.length} task(s)? This cannot be undone.`, "Empty trash"))
+                      inView.forEach((t) => store.deleteForever(t.id));
+                  }}>Empty trash</button>
+                </div>
+              )}
+              {groups.map((g) => (
+                <div key={g.key}>
+                  {g.label && g.tasks.length > 0 && (
+                    <div className="group-head" onClick={() => setCollapsed({ ...collapsed, [`g:${g.key}`]: !collapsed[`g:${g.key}`] })}>
+                      <span className="mono">{collapsed[`g:${g.key}`] ? "+" : "-"}</span>
+                      <span className={g.label === "Overdue" ? "overdue" : ""}>{g.label}</span>
+                      <span className="num muted">{g.tasks.length}</span>
+                    </div>
+                  )}
+                  {!collapsed[`g:${g.key}`] && g.tasks.map((t) => (
+                    <TaskRow key={t.id} t={t} store={store} active={t.id === selected}
+                      tracking={time.running?.taskId === t.id} showList={scope.kind !== "list"}
+                      onSelect={() => setSelected(t.id)} onToggle={() => toggleDone(t)}
+                      onMenu={(x, y) => setMenu({ kind: "task", task: t, x, y })} />
+                  ))}
+                </div>
+              ))}
+              {!openTasks.length && <div className="empty">{search ? "No tasks match your search." : "Nothing here."}</div>}
+              {doneTasks.length > 0 && (
+                <>
+                  <div className="group-head" onClick={() => setShowDone(!showDone)}>
+                    <span className="mono">{showDone ? "-" : "+"}</span>Completed<span className="num muted">{doneTasks.length}</span>
+                  </div>
+                  {showDone && sortTasks(doneTasks, "created").map((t) => (
+                    <TaskRow key={t.id} t={t} store={store} active={t.id === selected} tracking={false} showList={false}
+                      onSelect={() => setSelected(t.id)} onToggle={() => toggleDone(t)}
+                      onMenu={(x, y) => setMenu({ kind: "task", task: t, x, y })} />
+                  ))}
+                </>
+              )}
+            </div>
           )}
         </div>
+
+        {sel && !(scope.kind === "smart" && scope.id === "summary") && (
+          <div className="pane" style={{ width: 340, borderRight: 0 }}>
+            {sel.deletedAt ? (
+              <div className="detail">
+                <div className="detail-title">{sel.title}</div>
+                <p className="muted">This task is in the Trash.</p>
+                <div className="row">
+                  <button className="btn" onClick={() => store.restoreTask(sel)}>Restore</button>
+                  <button className="btn ghost danger" onClick={async () => {
+                    if (await askConfirm("Delete this task forever?", "Delete")) { store.deleteForever(sel.id); setSelected(null); }
+                  }}>Delete forever</button>
+                </div>
+              </div>
+            ) : (
+              <TaskDetail key={sel.id} t={sel} store={store} time={time} onClose={() => setSelected(null)} />
+            )}
+          </div>
+        )}
       </div>
+
+      {menu?.kind === "list" && (
+        <Popover x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
+          <MenuLabel>Colour</MenuLabel>
+          <div className="pad"><ColorPicker value={menu.list.color} onChange={(c) => { saveList({ ...menu.list, color: c }); setMenu({ ...menu, list: { ...menu.list, color: c } }); }} /></div>
+          <hr />
+          <MenuItem onClick={async () => { setMenu(null); const n = await askText("Rename list", menu.list.name); if (n?.trim()) saveList({ ...menu.list, name: n.trim() }); }}>Rename</MenuItem>
+          <MenuItem onClick={async () => { setMenu(null); const f = await askText("Folder name (empty for none)", menu.list.folder); if (f !== null) saveList({ ...menu.list, folder: f.trim() }); }}>Move to folder</MenuItem>
+          <MenuItem onClick={() => { saveList({ ...menu.list, view: menu.list.view === "kanban" ? "list" : "kanban" }); setMenu(null); }}>
+            Show as {menu.list.view === "kanban" ? "list" : "board"}
+          </MenuItem>
+          <MenuItem disabled={menu.list.id === "inbox"} onClick={() => { saveList({ ...menu.list, archived: !menu.list.archived }); setMenu(null); }}>
+            {menu.list.archived ? "Unarchive" : "Archive"}
+          </MenuItem>
+          <hr />
+          <MenuItem danger disabled={menu.list.id === "inbox"} onClick={async () => {
+            const l = menu.list; setMenu(null);
+            if (await askConfirm(`Delete list "${l.name}"? Its tasks move to Inbox.`, "Delete list")) {
+              deleteList(l.id);
+              if (scope.kind === "list" && scope.id === l.id) nav({ kind: "smart", id: "today" });
+            }
+          }}>Delete list</MenuItem>
+        </Popover>
+      )}
+      {menu?.kind === "tag" && (
+        <Popover x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
+          <MenuLabel>Colour for #{menu.tag}</MenuLabel>
+          <div className="pad"><ColorPicker value={tagColors[menu.tag] ?? ""} onChange={(c) => store.setTagColor(menu.tag, c)} /></div>
+          <hr />
+          <MenuItem onClick={async () => {
+            const tag = menu.tag; setMenu(null);
+            const n = await askText(`Rename #${tag} on every task`, tag);
+            if (n?.trim() && n !== tag) {
+              tasks.filter((t) => t.tags.includes(tag)).forEach((t) => saveTask({ ...t, tags: [...new Set(t.tags.map((x) => (x === tag ? n.trim() : x)))] }));
+              if (tagColors[tag]) store.setTagColor(n.trim(), tagColors[tag]);
+            }
+          }}>Rename tag</MenuItem>
+        </Popover>
+      )}
+      {menu?.kind === "task" && (
+        <Popover x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
+          <MenuItem onClick={() => { toggleDone(menu.task); setMenu(null); }}>{menu.task.done ? "Reopen" : "Complete"}</MenuItem>
+          <MenuItem onClick={() => { saveTask({ ...menu.task, dueDate: ymd(new Date()), startAt: null, endAt: null }); setMenu(null); }}>Due today</MenuItem>
+          <MenuItem onClick={() => { saveTask({ ...menu.task, dueDate: ymd(new Date(Date.now() + 86400000)), startAt: null, endAt: null }); setMenu(null); }}>Due tomorrow</MenuItem>
+          <MenuItem onClick={() => { saveTask({ ...menu.task, pinned: !menu.task.pinned }); setMenu(null); }}>{menu.task.pinned ? "Unpin" : "Pin to top"}</MenuItem>
+          <MenuItem onClick={() => { time.start({ task: menu.task, mode: "pomodoro" }); setMenu(null); }}>Start pomodoro</MenuItem>
+          <MenuLabel>Priority</MenuLabel>
+          <div className="pad seg">
+            {["None", "Low", "Med", "High"].map((p, i) => (
+              <button key={p} aria-pressed={menu.task.priority === i} onClick={() => { saveTask({ ...menu.task, priority: i }); setMenu(null); }}>{p}</button>
+            ))}
+          </div>
+          <hr />
+          <MenuItem onClick={() => { store.duplicateTask(menu.task); setMenu(null); }}>Duplicate</MenuItem>
+          <MenuItem onClick={() => { store.setWontDo(menu.task, !menu.task.wontDo); setMenu(null); }}>{menu.task.wontDo ? "Reopen" : "Won't do"}</MenuItem>
+          <MenuItem danger onClick={() => { store.trashTask(menu.task); setMenu(null); }}>Delete</MenuItem>
+        </Popover>
+      )}
+      {editingFilter && (
+        <FilterEditor filter={editingFilter} store={store} onClose={() => setEditingFilter(null)}
+          onSaved={(f) => { setEditingFilter(null); nav({ kind: "filter", id: f.id }); }} />
+      )}
     </>
   );
 }
 
-function QuickPreview({ text }: { text: string }) {
+function QuickPreview({ text, lists }: { text: string; lists: TaskList[] }) {
   const p = parseQuickAdd(text);
+  const list = p.listName ? lists.find((l) => l.name.toLowerCase() === p.listName!.toLowerCase()) : undefined;
   const bits = [
     p.startAt ? `${p.startAt.slice(0, 10)} ${hm(p.startAt)}-${hm(p.endAt)}` : p.dueDate,
+    p.recurrence ? describeRecurrence(p.recurrence) : "",
     ...p.tags.map((t) => `#${t}`),
     p.priority ? `!${p.priority}` : "",
+    p.listName ? (list ? `~${list.name}` : `~${p.listName} (no such list)`) : "",
+    p.section ? `^${p.section}` : "",
   ].filter(Boolean);
   if (!bits.length) return null;
   return <div className="quick-preview mono">{bits.join("  ")}</div>;
 }
 
-function TaskRow(props: {
-  t: Task; active: boolean; today: string; listName?: string; tracking: boolean;
-  onSelect: () => void; onToggle: () => void;
+export function TaskRow(props: {
+  t: Task; store: TaskStore; active: boolean; tracking: boolean; showList: boolean;
+  onSelect: () => void; onToggle: () => void; onMenu: (x: number, y: number) => void;
 }) {
-  const { t, active, today, listName, tracking, onSelect, onToggle } = props;
+  const { t, store, active, tracking, showList, onSelect, onToggle, onMenu } = props;
+  const today = ymd(new Date());
   const day = taskDay(t);
   const overdue = !t.done && day && day < today;
+  const list = store.lists.find((l) => l.id === t.listId);
   const when = t.startAt
-    ? `${day === today ? "" : parseLocal(t.startAt).toLocaleDateString(undefined, { day: "numeric", month: "short" }) + " "}${hm(t.startAt)}-${hm(t.endAt)}`
-    : day && day !== today ? parseLocal(day).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }) : day ? "today" : "";
+    ? `${day === today ? "" : parseLocal(t.startAt).toLocaleDateString(undefined, { day: "numeric", month: "short" }) + " "}${hm(t.startAt)}`
+    : day ? (day === today ? "Today" : parseLocal(day).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })) : "";
+  const doneItems = t.checklist.filter((c) => c.done).length;
   return (
-    <div className={`task-row ${active ? "active" : ""} ${t.done ? "done" : ""}`} onClick={onSelect}>
-      <button className="check" aria-label={t.done ? "Mark open" : "Mark done"} aria-pressed={t.done}
+    <div className={`task-row ${active ? "active" : ""} ${t.done ? "done" : ""}`} onClick={onSelect}
+      draggable onDragStart={(e) => e.dataTransfer.setData("text/task", t.id)}
+      onContextMenu={(e) => { e.preventDefault(); onMenu(e.clientX, e.clientY); }}>
+      <button className={`check p${t.priority}`} aria-label={t.done ? "Mark open" : "Mark done"} aria-pressed={t.done}
         onClick={(e) => { e.stopPropagation(); onToggle(); }} />
-      <span className="prio" title={PRIORITY[t.priority]}>{"!".repeat(t.priority)}</span>
-      <span className="title">{t.title || <span className="muted">Untitled</span>}</span>
-      {tracking && <span className="mono" style={{ color: "var(--accent)", fontSize: 11 }} title="Timer running">● rec</span>}
-      {t.note && <span className="muted mono" title="Has a note">¶</span>}
-      {t.tags.map((tag) => <span key={tag} className="tag">{tag}</span>)}
-      {listName && <span className="muted" style={{ fontSize: 11.5 }}>{listName}</span>}
+      <span className="title">
+        {t.pinned && <span className="pin mono" title="Pinned">▲ </span>}
+        {t.title || <span className="muted">Untitled</span>}
+        {t.wontDo && <span className="muted mono" style={{ fontSize: 11 }}> won't do</span>}
+      </span>
+      {tracking && <span className="rec mono" title="Timer running">● rec</span>}
+      {t.checklist.length > 0 && <span className="meta num" title="Subtasks">{doneItems}/{t.checklist.length}</span>}
+      {t.recurrence && <span className="meta mono" title={describeRecurrence(t.recurrence)}>↻</span>}
+      {t.reminders.length > 0 && <span className="meta mono" title="Has reminders">◔</span>}
+      {t.note && <span className="meta mono" title="Has a note">¶</span>}
+      {t.tags.map((tag) => (
+        <span key={tag} className="tag-chip" style={store.tagColors[tag] ? { color: store.tagColors[tag] } : undefined}>#{tag}</span>
+      ))}
+      {showList && list && <span className="list-chip"><Dot color={list.color} size={7} />{list.name}</span>}
       <span className={`when num ${overdue ? "overdue" : ""}`}>{when}</span>
-    </div>
-  );
-}
-
-function TaskDetail({ t, store, time, onDelete }: { t: Task; store: TaskStore; time: TimeStore; onDelete: () => void }) {
-  const { lists, saveTask } = store;
-  const [draft, setDraft] = useState(t);
-  const [tagText, setTagText] = useState(t.tags.join(", "));
-  const update = (patch: Partial<Task>) => {
-    const next = { ...draft, ...patch };
-    setDraft(next);
-    saveTask(next);
-  };
-
-  const date = draft.startAt?.slice(0, 10) ?? draft.dueDate ?? "";
-  const setDate = (d: string) => {
-    if (!d) return update({ dueDate: null, startAt: null, endAt: null });
-    update({
-      dueDate: d,
-      startAt: draft.startAt ? `${d}T${hm(draft.startAt)}` : null,
-      endAt: draft.endAt ? `${d}T${hm(draft.endAt)}` : null,
-    });
-  };
-  const setTime = (which: "startAt" | "endAt", v: string) => {
-    if (!date) return;
-    if (!v) return update(which === "startAt" ? { startAt: null, endAt: null } : { endAt: null });
-    const patch: Partial<Task> = { [which]: `${date}T${v}` };
-    // Default a new block to one hour.
-    if (which === "startAt" && !draft.endAt) {
-      const [h, m] = v.split(":").map(Number);
-      patch.endAt = `${date}T${String(Math.min(23, h + 1)).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-    }
-    update(patch);
-  };
-
-  return (
-    <div className="scroll detail">
-      <input className="input bare detail-title" value={draft.title} placeholder="Title"
-        onChange={(e) => update({ title: e.target.value })} />
-      <div className="detail-grid">
-        <label className="label">List</label>
-        <select className="select" value={draft.listId} onChange={(e) => update({ listId: e.target.value })}>
-          {lists.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-        </select>
-        <label className="label">Date</label>
-        <input type="date" className="input" value={date} onChange={(e) => setDate(e.target.value)} />
-        <label className="label">Time</label>
-        <div className="row">
-          <input type="time" className="input" disabled={!date} value={hm(draft.startAt)} onChange={(e) => setTime("startAt", e.target.value)} />
-          <span className="muted">to</span>
-          <input type="time" className="input" disabled={!draft.startAt} value={hm(draft.endAt)} onChange={(e) => setTime("endAt", e.target.value)} />
-        </div>
-        <label className="label">Priority</label>
-        <div className="seg">
-          {PRIORITY.map((p, i) => (
-            <button key={p} aria-pressed={draft.priority === i} onClick={() => update({ priority: i })}>{p}</button>
-          ))}
-        </div>
-        <label className="label">Tags</label>
-        <input className="input" value={tagText} placeholder="school, maths"
-          onChange={(e) => setTagText(e.target.value)}
-          onBlur={() => update({ tags: [...new Set(tagText.split(",").map((s) => s.trim().replace(/^#/, "")).filter(Boolean))] })} />
-      </div>
-      <div className="label" style={{ margin: "16px 0 6px" }}>Time tracking</div>
-      <TaskTimer task={draft} time={time} />
-      <div className="label" style={{ margin: "16px 0 6px" }}>Note</div>
-      <textarea className="textarea" rows={12} style={{ width: "100%", resize: "vertical", fontFamily: "var(--mono)", fontSize: 12.5 }}
-        value={draft.note} placeholder="Markdown supported. Link vault notes with [[Note name]]."
-        onChange={(e) => update({ note: e.target.value })} />
-      <div className="row" style={{ marginTop: 14, justifyContent: "space-between" }}>
-        <span className="muted num" style={{ fontSize: 11 }}>created {draft.createdAt.slice(0, 10)}</span>
-        <button className="btn ghost danger" onClick={onDelete}>Delete task</button>
-      </div>
     </div>
   );
 }

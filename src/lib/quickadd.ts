@@ -1,9 +1,13 @@
-// Quick-add parser: "Maths homework mon 1pm-3pm #school !2"
+// Quick-add parser: "Maths homework mon 1pm-3pm #school !2 ~School every week"
+//   ~List / ^Section -> list and kanban section
+//   every day / every 2 weeks / every mon,wed / weekdays -> repeat rule
 //   #tag            -> tag
 //   !1 / !2 / !3    -> priority low/med/high
 //   today, tomorrow, mon..sun, 2026-11-20, 20/11 -> date
 //   1pm, 13:00, 1pm-3pm, 13:00-15:00, "at 9"     -> time block (1h default)
 import { addDays, localIso, ymd } from "./dates";
+import { parseRepeat } from "./recurrence";
+import type { Recurrence } from "./types";
 
 export interface Parsed {
   title: string;
@@ -12,6 +16,11 @@ export interface Parsed {
   dueDate: string | null;
   startAt: string | null;
   endAt: string | null;
+  /** From "~ListName" (matched against lists by the caller) */
+  listName: string | null;
+  /** From "^Section" */
+  section: string | null;
+  recurrence: Recurrence | null;
 }
 
 const DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
@@ -30,17 +39,25 @@ function parseTime(tok: string): [number, number] | null {
 }
 
 export function parseQuickAdd(input: string, today = new Date()): Parsed {
-  const out: Parsed = { title: "", tags: [], priority: 0, dueDate: null, startAt: null, endAt: null };
+  const out: Parsed = {
+    title: "", tags: [], priority: 0, dueDate: null, startAt: null, endAt: null,
+    listName: null, section: null, recurrence: null,
+  };
   let date: Date | null = null;
   let start: [number, number] | null = null;
   let end: [number, number] | null = null;
   const words: string[] = [];
 
-  const tokens = input.trim().split(/\s+/);
+  // Repeat phrases first, so "every mon" is not read as a one-off Monday.
+  const rep = parseRepeat(input);
+  out.recurrence = rep.rule;
+  const tokens = rep.rest.trim().split(/\s+/).filter(Boolean);
   for (let i = 0; i < tokens.length; i++) {
     const raw = tokens[i];
     const t = raw.toLowerCase();
     if (/^#[\w-]+$/.test(raw)) { out.tags.push(raw.slice(1)); continue; }
+    if (/^~[\w-]+$/.test(raw)) { out.listName = raw.slice(1).replace(/-/g, " "); continue; }
+    if (/^\^[\w-]+$/.test(raw)) { out.section = raw.slice(1).replace(/-/g, " "); continue; }
     if (/^![1-3]$/.test(t)) { out.priority = Number(t[1]); continue; }
     if (t === "today") { date = today; continue; }
     if (t === "tomorrow" || t === "tmr") { date = addDays(today, 1); continue; }
@@ -80,5 +97,7 @@ export function parseQuickAdd(input: string, today = new Date()): Parsed {
   } else if (date) {
     out.dueDate = ymd(date);
   }
+  // A repeating task with no date starts today.
+  if (out.recurrence && !out.dueDate) out.dueDate = ymd(today);
   return out;
 }

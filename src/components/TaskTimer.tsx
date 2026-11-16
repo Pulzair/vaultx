@@ -1,11 +1,12 @@
-import { entrySeconds, fmtClock, fmtHm, type TimeStore } from "../lib/timeStore";
+import { entrySeconds, fmtClock, fmtHm, isFocus, type TimeStore } from "../lib/timeStore";
 import type { Task } from "../lib/types";
 
-/** Start/stop tracking for one task, plus its tracked total. */
+/** Start/stop tracking for one task, plus its tracked total vs estimate. */
 export default function TaskTimer({ task, time }: { task: Task; time: TimeStore }) {
-  const { running, now, start, stop, entries, totalForTask } = time;
+  const { running, now, start, stop, entries, totalForTask, settings } = time;
   const mine = running?.taskId === task.id ? running : null;
-  const sessions = entries.filter((e) => e.taskId === task.id).length;
+  const sessions = entries.filter((e) => e.taskId === task.id && isFocus(e));
+  const pomos = sessions.filter((e) => e.mode === "pomodoro" && e.endAt && entrySeconds(e) >= (e.targetMin ?? 25) * 60 - 5).length;
   const total = totalForTask(task.id);
 
   return (
@@ -22,13 +23,14 @@ export default function TaskTimer({ task, time }: { task: Task; time: TimeStore 
           </>
         ) : (
           <>
-            <button className="btn" onClick={() => start({ task })}>Start timer</button>
-            <button className="btn ghost" onClick={() => start({ task, mode: "pomodoro", targetMin: 25 })}>Pomodoro 25</button>
+            <button className="btn" onClick={() => start({ task, mode: "pomodoro" })}>Pomodoro {settings.pomoMin}</button>
+            <button className="btn ghost" onClick={() => start({ task })}>Stopwatch</button>
           </>
         )}
       </div>
       <span className="muted num" style={{ fontSize: 11.5 }}>
-        {sessions ? `tracked ${fmtHm(total)} in ${sessions} session${sessions === 1 ? "" : "s"}` : "no time tracked yet"}
+        {sessions.length ? `tracked ${fmtHm(total)} in ${sessions.length} session${sessions.length === 1 ? "" : "s"}` : "no time tracked yet"}
+        {task.estimatePomos ? ` · ${pomos}/${task.estimatePomos} pomodoros` : pomos ? ` · ${pomos} pomodoros` : ""}
       </span>
     </div>
   );

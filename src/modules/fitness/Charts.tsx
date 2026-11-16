@@ -165,3 +165,146 @@ export function VolumeChart({ weeks }: { weeks: WeekVolume[] }) {
     </div>
   );
 }
+
+// ---------- stream small multiples (one activity) ----------
+
+export interface StreamDef {
+  key: string;
+  label: string;
+  values: (number | null)[];
+  fmt: (v: number) => string;
+  /** Lower is better (pace) - flips the y axis. */
+  invert?: boolean;
+  area?: boolean;
+}
+
+/** Stacked small-multiple line charts sharing one x axis and one hover crosshair. */
+export function StreamCharts({ t, streams, xLabel }: { t: number[]; streams: StreamDef[]; xLabel: (sec: number) => string }) {
+  const [ref, w] = useWidth();
+  const [hover, setHover] = useState<number | null>(null);
+  const H = 92, L = 46, R = 10;
+  const iw = Math.max(10, w - L - R);
+  const tMax = t[t.length - 1] || 1;
+  const x = (sec: number) => L + (sec / tMax) * iw;
+
+  return (
+    <div ref={ref} className="chart streams"
+      onMouseMove={(e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        const sec = ((e.clientX - r.left - L) / iw) * tMax;
+        if (sec < 0 || sec > tMax) return setHover(null);
+        let lo = 0, hi = t.length - 1;
+        while (lo < hi) { const mid = (lo + hi) >> 1; if (t[mid] < sec) lo = mid + 1; else hi = mid; }
+        setHover(lo);
+      }}
+      onMouseLeave={() => setHover(null)}>
+      {streams.map((s, si) => {
+        const vals = s.values.filter((v): v is number => v != null && Number.isFinite(v));
+        if (vals.length < 2) return null;
+        // Robust range: ignore the extreme 1% so a GPS glitch does not flatten the chart.
+        const sorted = [...vals].sort((a, b) => a - b);
+        const lo = sorted[Math.floor(sorted.length * 0.01)], hi = sorted[Math.ceil(sorted.length * 0.99) - 1];
+        const pad = (hi - lo) * 0.08 || 1;
+        const y0 = lo - pad, y1 = hi + pad;
+        const y = (v: number) => {
+          const f = (Math.min(y1, Math.max(y0, v)) - y0) / (y1 - y0);
+          return 6 + (s.invert ? f : 1 - f) * (H - 16);
+        };
+        let d = "";
+        let pen = false;
+        s.values.forEach((v, i) => {
+          if (v == null || !Number.isFinite(v)) { pen = false; return; }
+          d += `${pen ? "L" : "M"}${x(t[i]).toFixed(1)},${y(v).toFixed(1)}`;
+          pen = true;
+        });
+        const hv = hover !== null ? s.values[hover] : null;
+        const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+        return (
+          <div key={s.key} className="stream">
+            <div className="stream-head">
+              <span className="label">{s.label}</span>
+              <span className="num muted">avg {s.fmt(avg)}</span>
+              {hv != null && <span className="num stream-val">{s.fmt(hv)}</span>}
+            </div>
+            <svg width={w} height={H}>
+              <line x1={L} x2={w - R} y1={H - 10} y2={H - 10} className="axis" />
+              <text x={L - 6} y={y(s.invert ? lo : hi) + 3} textAnchor="end" className="tick">{s.fmt(s.invert ? lo : hi)}</text>
+              <text x={L - 6} y={y(s.invert ? hi : lo) + 3} textAnchor="end" className="tick">{s.fmt(s.invert ? hi : lo)}</text>
+              <path d={d} fill="none" stroke={`var(--series-${si + 1})`} strokeWidth={1.6} strokeLinejoin="round" />
+              {hover !== null && <line x1={x(t[hover])} x2={x(t[hover])} y1={4} y2={H - 10} className="crosshair" />}
+              {hover !== null && hv != null && <circle cx={x(t[hover])} cy={y(hv)} r={3.5} fill={`var(--series-${si + 1})`} stroke="var(--surface)" strokeWidth={2} />}
+            </svg>
+          </div>
+        );
+      })}
+      <div className="row num muted" style={{ justifyContent: "space-between", fontSize: 10.5, paddingLeft: L, paddingRight: R }}>
+        <span>{xLabel(0)}</span>
+        {hover !== null && <span style={{ color: "var(--ink)" }}>{xLabel(t[hover])}</span>}
+        <span>{xLabel(tMax)}</span>
+      </div>
+    </div>
+  );
+}
+
+// ---------- daily series (wellness) ----------
+
+export function DailyChart({ dates, values, label, fmt, kind = "line", color = "var(--series-1)", band }: {
+  dates: string[]; values: (number | null)[]; label: string; fmt: (v: number) => string;
+  kind?: "line" | "bar"; color?: string; band?: (number | null)[];
+}) {
+  const [ref, w] = useWidth();
+  const [hover, setHover] = useState<number | null>(null);
+  const H = 110, L = 40, R = 8, T = 8, B = 16;
+  const vals = [...values, ...(band ?? [])].filter((v): v is number => v != null);
+  const latest = [...values].reverse().find((v) => v != null);
+  const iw = Math.max(10, w - L - R), ih = H - T - B;
+  if (!vals.length) {
+    return <div ref={ref} className="chart daily"><div className="stream-head"><span className="label">{label}</span></div><div className="muted" style={{ fontSize: 12, padding: "16px 0" }}>No data yet.</div></div>;
+  }
+  const lo = kind === "bar" ? 0 : Math.min(...vals), hi = Math.max(...vals);
+  const pad = kind === "bar" ? 0 : (hi - lo) * 0.1 || 1;
+  const y0 = lo - pad, y1 = hi + pad;
+  const x = (i: number) => L + (dates.length === 1 ? iw / 2 : (i / (dates.length - 1)) * iw);
+  const y = (v: number) => T + (1 - (v - y0) / (y1 - y0 || 1)) * ih;
+  const bw = Math.max(1, (iw / dates.length) * 0.7);
+  const path = (arr: (number | null)[]) => {
+    let d = "", pen = false;
+    arr.forEach((v, i) => { if (v == null) { pen = false; return; } d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`; pen = true; });
+    return d;
+  };
+  const hv = hover !== null ? values[hover] : null;
+  return (
+    <div ref={ref} className="chart daily">
+      <div className="stream-head">
+        <span className="label">{label}</span>
+        {latest != null && <span className="num">{fmt(latest)}</span>}
+        {hover !== null && <span className="num muted stream-val">{dates[hover]}: {hv != null ? fmt(hv) : "-"}</span>}
+      </div>
+      <svg width={w} height={H} onMouseLeave={() => setHover(null)}
+        onMouseMove={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          const i = Math.round(((e.clientX - r.left - L) / iw) * (dates.length - 1));
+          setHover(i >= 0 && i < dates.length ? i : null);
+        }}>
+        <line x1={L} x2={w - R} y1={y(y0)} y2={y(y0)} className="axis" />
+        <text x={L - 6} y={y(hi) + 3} textAnchor="end" className="tick">{fmt(hi)}</text>
+        <text x={L - 6} y={y(kind === "bar" ? 0 : lo) + 3} textAnchor="end" className="tick">{fmt(kind === "bar" ? 0 : lo)}</text>
+        {kind === "bar"
+          ? values.map((v, i) => v != null && v > 0 ? (
+            <rect key={i} x={x(i) - bw / 2} y={y(v)} width={bw} height={y(0) - y(v)} rx={1} fill={color} opacity={hover === null || hover === i ? 1 : 0.55} />
+          ) : null)
+          : (
+            <>
+              {band && <path d={path(band)} fill="none" stroke="var(--ink-3)" strokeWidth={1} strokeDasharray="3 3" />}
+              <path d={path(values)} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" />
+              {values.map((v, i) => v != null && dates.length <= 45 ? <circle key={i} cx={x(i)} cy={y(v)} r={hover === i ? 4 : 2} fill={color} /> : null)}
+            </>
+          )}
+        {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={T} y2={T + ih} className="crosshair" />}
+      </svg>
+      <div className="row num muted" style={{ justifyContent: "space-between", fontSize: 10.5, paddingLeft: L, paddingRight: R }}>
+        <span>{dates[0]?.slice(5)}</span><span>{dates[dates.length - 1]?.slice(5)}</span>
+      </div>
+    </div>
+  );
+}

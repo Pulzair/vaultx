@@ -31,6 +31,13 @@
   (`DEV_BUILD` in `lib.rs`; the path lives in `AppState.data_dir` - use it,
   not `app.path().app_data_dir()`).
 
+## Data portability (src-tauri/src/data.rs)
+
+- `docs` table: generic JSON documents by collection (diet `foods`, `food_logs`, `diet_days`; task `filters`).
+- Export/import: one JSON file with every table + vault notes; import tolerates schema drift (see HANDOFF).
+- Local API: `tiny_http` on 127.0.0.1, read-only, bearer token; started at launch when enabled.
+- Schema evolution: append to `MIGRATIONS` in `db.rs`, bump `SCHEMA_VERSION`.
+
 ## Conventions
 
 - Rust commands return `Result<T, String>`; the UI shows the string.

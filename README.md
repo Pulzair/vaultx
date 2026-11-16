@@ -8,11 +8,15 @@ Everything stays on your computer. Open source (MIT).
 ## Modules
 
 - **Notes** - Markdown files in a folder you own, `[[wiki links]]`, backlinks and a link graph. Works with an existing Obsidian vault.
-- **Tasks** - lists, tags, priorities, notes per task, and time blocks. Type `Maths homework mon 1pm-3pm #school !2` and it is scheduled.
-- **Calendar** - week and month views of your tasks, drag to reschedule, plus read-only Google / Outlook / Apple calendars via their ICS links; export tasks as `.ics`.
+- **Tasks** - TickTick-style: coloured lists and folders, board view, subtasks, repeats, reminders, tags, filters, Trash and summaries. Type `Maths homework mon 1pm-3pm #school !2 every week` and it is scheduled.
+- **Calendar** - day, 3-day, week, month and agenda views; drag tasks in and around; read-only Google / Outlook / Apple calendars via ICS; export as `.ics`.
+- **Time** - pomodoro and stopwatch timers with breaks and background noise, plus a statistics window: trends, breakdown by list/tag/task, best focus hours, planned vs actual.
+- **Habits** - check-ins, streaks and stats.
+- **Diet** - meal log, foods library, calorie and macro targets, water and weight.
+- **Training** - Garmin Connect sync or `.FIT` import from any device, plus hand-logged sessions. Runalyze-style load (TRIMP, fitness/fatigue/form), VO2max, race predictions, HR zones, stream charts, laps, records, and Garmin wellness (sleep, HRV, resting HR, Body Battery) across every sport.
 - **Sheets** - spreadsheets with formulas, CSV import/export.
-- **Training** - Garmin Connect sync or `.FIT` import from any device, plus hand-logged sessions. Runalyze-style load (TRIMP, fitness/fatigue/form), effective VO2max, race predictions, and weekly volume across every sport: run, ride, swim, paddle, walk, gym and more.
 - **Digest** (experimental) - RSS headlines ranked by your interests.
+- **Your data, portable** - one-file backups that import into any version, CSV exports, and an optional read-only local API.
 
 ## Build from source
 

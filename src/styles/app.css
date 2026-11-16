@@ -75,8 +75,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 ::selection { background: var(--accent-soft); }
 
 /* ---------- shell ---------- */
-.shell { display: grid; grid-template-columns: var(--rail) 1fr; height: 100%; }
+/* minmax(0, 1fr) stops tall content (e.g. the 24h calendar) from stretching
+   the window row; each module then scrolls inside its own panes. */
+.shell { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: 100%; overflow: hidden; }
 .rail {
+  min-height: 0; overflow-y: auto;
   border-right: 1px solid var(--line);
   display: flex; flex-direction: column;
   padding: 14px 0 10px;
@@ -100,12 +103,19 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .rail button[aria-current="page"] { color: var(--ink); border-left-color: var(--accent); font-weight: 500; }
 .rail kbd { font: 11px var(--mono); color: var(--ink-3); }
 .rail .spacer { flex: 1; }
+.search-btn {
+  all: unset; margin: 0 10px 10px; padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--r);
+  color: var(--ink-3); display: flex; justify-content: space-between; cursor: default;
+}
+.search-btn:hover { border-color: var(--line-strong); color: var(--ink); }
+.search-btn kbd { font: 11px var(--mono); }
 .rail .vault-path {
   font: 10.5px var(--mono); color: var(--ink-3);
   padding: 8px 16px 0; word-break: break-all;
 }
 
-.main { min-width: 0; display: flex; flex-direction: column; height: 100%; }
+.main { min-width: 0; min-height: 0; display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.body > * { min-height: 0; }
 .bar {
   display: flex; align-items: center; gap: 10px;
   height: 40px; padding: 0 14px;
@@ -186,6 +196,14 @@ table.data th {
 table.data td { padding: 5px 10px; border-bottom: 1px solid var(--line); }
 table.data td.r, table.data th.r { text-align: right; }
 table.data tr:hover td { background: var(--surface-2); }
+
+.settings { padding: 6px 22px 40px; max-width: 760px; }
+.settings section { padding: 14px 0; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
+.settings h2 { font-size: 13px; font-weight: 600; margin: 0 0 4px; }
+.settings p { margin: 0; font-size: 12.5px; }
+.settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0 12px; }
+.code { font: 12px var(--mono); background: var(--surface-2); padding: 2px 6px; border-radius: var(--r); }
+.code-block { font: 11.5px/1.6 var(--mono); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; overflow-x: auto; margin: 0; }
 
 dialog {
   border: 1px solid var(--line-strong); border-radius: var(--r);

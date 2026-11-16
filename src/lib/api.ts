@@ -1,6 +1,11 @@
 // Typed wrappers around the Rust commands registered in src-tauri/src/lib.rs.
 import { invoke } from "@tauri-apps/api/core";
-import type { Activity, Calendar, ExternalEvent, NoteMeta, Task, TaskList, TimeEntry } from "./types";
+import type {
+  Activity, ActivityDetail, Calendar, DailyMetrics, ExternalEvent, Habit, HabitCheckin, NoteMeta, Task, TaskList, TimeEntry,
+} from "./types";
+
+type ApiStatus = { enabled: boolean; port: number; token: string; running: boolean };
+type ImportResult = { rows: Record<string, number>; filesWritten: number; filesSkipped: number; backup: string; fromVersion: string };
 
 export const api = {
   // settings
@@ -14,6 +19,26 @@ export const api = {
   listTasks: () => invoke<Task[]>("list_tasks"),
   saveTask: (task: Task) => invoke<void>("save_task", { task }),
   deleteTask: (id: string) => invoke<void>("delete_task", { id }),
+
+  // habits
+  listHabits: () => invoke<Habit[]>("list_habits"),
+  saveHabit: (habit: Habit) => invoke<void>("save_habit", { habit }),
+  deleteHabit: (id: string) => invoke<void>("delete_habit", { id }),
+  listCheckins: () => invoke<HabitCheckin[]>("list_checkins"),
+  setCheckin: (checkin: HabitCheckin) => invoke<void>("set_checkin", { checkin }),
+
+  // generic document store (diet, saved filters...)
+  listDocs: <T,>(collection: string) => invoke<T[]>("list_docs", { collection }),
+  saveDoc: <T extends { id: string }>(collection: string, doc: T) => invoke<void>("save_doc", { collection, doc }),
+  deleteDoc: (collection: string, id: string) => invoke<void>("delete_doc", { collection, id }),
+
+  // data portability
+  exportAll: () => invoke<string>("export_all"),
+  exportCsv: (table: string) => invoke<string>("export_csv", { table }),
+  importAll: (text: string, overwriteFiles: boolean) => invoke<ImportResult>("import_all", { text, overwriteFiles }),
+  apiStatus: () => invoke<ApiStatus>("api_status"),
+  apiConfigure: (enabled: boolean, port: number, newToken: boolean) =>
+    invoke<ApiStatus>("api_configure", { enabled, port, newToken }),
 
   // calendars
   listCalendars: () => invoke<Calendar[]>("list_calendars"),
@@ -43,7 +68,10 @@ export const api = {
   listActivities: () => invoke<Activity[]>("list_activities"),
   saveActivity: (activity: Activity) => invoke<void>("save_activity", { activity }),
   deleteActivity: (id: string) => invoke<void>("delete_activity", { id }),
+  getActivityDetail: (id: string) => invoke<ActivityDetail | null>("get_activity_detail", { id }),
   importFit: (name: string, bytes: number[]) => invoke<number>("import_fit", { name, bytes }),
+  listDailyMetrics: () => invoke<DailyMetrics[]>("list_daily_metrics"),
+  saveDailyMetric: (date: string, patch: Partial<DailyMetrics>) => invoke<void>("save_daily_metric", { date, patch }),
   garminStatus: () => invoke<{ installed: boolean; hasTokens: boolean }>("garmin_status"),
   garminSetup: (python?: string) => invoke<string>("garmin_setup", { python: python ?? null }),
   garminLogin: (email: string, password: string) =>
@@ -51,6 +79,8 @@ export const api = {
   garminMfa: (code: string) => invoke<{ ok?: boolean }>("garmin_mfa", { code }),
   garminLogout: () => invoke<void>("garmin_logout"),
   garminSync: (days: number) => invoke<number>("garmin_sync", { days }),
+  garminActivityDetail: (id: string) => invoke<ActivityDetail>("garmin_activity_detail", { id }),
+  garminWellness: (days: number) => invoke<number>("garmin_wellness", { days }),
 
   // network
   fetchText: (url: string) => invoke<string>("fetch_text", { url }),

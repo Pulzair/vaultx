@@ -1,3 +1,4 @@
+mod data;
 mod db;
 mod fitness;
 mod net;
@@ -17,6 +18,8 @@ pub struct AppState {
     pub db: Mutex<rusqlite::Connection>,
     pub vault: Mutex<PathBuf>,
     pub garmin: Mutex<Option<fitness::GarminProc>>,
+    /// Opt-in local read-only HTTP API (see data.rs).
+    pub api: Mutex<Option<data::ApiServer>>,
 }
 
 /// Commands return `Result<_, String>` so errors reach the UI as plain text.
@@ -33,10 +36,15 @@ impl<T, E: std::fmt::Display> StrErr<T> for Result<T, E> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // Dev builds (`npm run tauri dev`) get their own database and vault
             // so experiments never touch the data of an installed copy.
-            let data_dir = if DEV_BUILD {
+            // VAULTX_DATA_DIR overrides everything: portable installs (data on a
+            // USB stick) and isolated test runs.
+            let data_dir = if let Ok(dir) = std::env::var("VAULTX_DATA_DIR") {
+                PathBuf::from(dir)
+            } else if DEV_BUILD {
                 let base = app.path().app_data_dir()?;
                 base.with_file_name(format!("{}.dev", base.file_name().unwrap().to_string_lossy()))
             } else {
@@ -50,6 +58,9 @@ pub fn run() {
             let vault = db::get_setting_conn(&conn, "vault_path")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| {
+                    if std::env::var("VAULTX_DATA_DIR").is_ok() {
+                        return data_dir.join("vault");
+                    }
                     app.path()
                         .document_dir()
                         .unwrap_or_else(|_| data_dir.clone())
@@ -69,7 +80,9 @@ pub fn run() {
                 db: Mutex::new(conn),
                 vault: Mutex::new(vault),
                 garmin: Mutex::new(None),
+                api: Mutex::new(None),
             });
+            data::autostart_api(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -81,6 +94,11 @@ pub fn run() {
             db::list_tasks,
             db::save_task,
             db::delete_task,
+            db::list_habits,
+            db::save_habit,
+            db::delete_habit,
+            db::list_checkins,
+            db::set_checkin,
             db::list_calendars,
             db::save_calendar,
             db::delete_calendar,
@@ -92,6 +110,17 @@ pub fn run() {
             db::list_activities,
             db::save_activity,
             db::delete_activity,
+            db::get_activity_detail,
+            db::list_daily_metrics,
+            db::save_daily_metric,
+            data::list_docs,
+            data::save_doc,
+            data::delete_doc,
+            data::export_all,
+            data::export_csv,
+            data::import_all,
+            data::api_status,
+            data::api_configure,
             vault::vault_info,
             vault::set_vault_path,
             vault::list_notes,
@@ -108,6 +137,8 @@ pub fn run() {
             fitness::garmin_mfa,
             fitness::garmin_logout,
             fitness::garmin_sync,
+            fitness::garmin_activity_detail,
+            fitness::garmin_wellness,
             net::fetch_text,
         ])
         .run(tauri::generate_context!())

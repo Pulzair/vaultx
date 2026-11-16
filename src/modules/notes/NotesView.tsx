@@ -9,7 +9,7 @@ import "./notes.css";
 
 type Mode = "edit" | "preview" | "graph";
 
-export default function NotesView() {
+export default function NotesView({ openPath, onOpened }: { openPath?: string | null; onOpened?: () => void } = {}) {
   const [notes, setNotes] = useState<NoteMeta[]>([]);
   const [current, setCurrent] = useState<string | null>(null);
   const [text, setText] = useState("");
@@ -59,10 +59,13 @@ export default function NotesView() {
     [flush, mode],
   );
 
-  // Open the first note on load.
+  // Open a note requested from the command palette, else the first note.
   useEffect(() => {
-    if (!current && notes.length) open(notes[0].path);
-  }, [notes, current, open]);
+    if (openPath) {
+      open(openPath);
+      onOpened?.();
+    } else if (!current && notes.length) open(notes[0].path);
+  }, [notes, current, open, openPath, onOpened]);
 
   const onEdit = (v: string) => {
     setText(v);

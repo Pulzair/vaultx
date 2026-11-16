@@ -8,6 +8,10 @@ import { newTask, type TaskStore } from "../../lib/taskStore";
 import { entrySeconds, fmtHm, localStamp, type TimeStore } from "../../lib/timeStore";
 import type { Activity, Calendar, ExternalEvent, Task, TimeEntry } from "../../lib/types";
 import TaskTimer from "../../components/TaskTimer";
+import { Dot } from "../../components/Menu";
+import { inkOn } from "../../lib/colors";
+
+type CalView = "day" | "3day" | "week" | "month" | "agenda";
 import "./calendar.css";
 
 const HOUR_PX = 44;
@@ -27,8 +31,9 @@ type Tracked =
 type Selection = { kind: "task" | "event" | "entry" | "activity"; id: string } | null;
 
 export default function CalendarView({ store, time }: { store: TaskStore; time: TimeStore }) {
-  const { tasks, saveTask, deleteTask } = store;
-  const [view, setView] = useState<"week" | "month">("week");
+  const { saveTask, trashTask, toggleDone, listColor } = store;
+  const tasks = useMemo(() => store.tasks.filter((t) => !t.deletedAt), [store.tasks]);
+  const [view, setView] = useState<CalView>("week");
   const [anchor, setAnchor] = useState(() => new Date());
   const [calendars, setCalendars] = useState<Calendar[]>([]);
   const [events, setEvents] = useState<ExternalEvent[]>([]);
@@ -111,11 +116,14 @@ export default function CalendarView({ store, time }: { store: TaskStore; time: 
   }, [tasks, events, calById]);
 
   const step = (dir: number) =>
-    setAnchor((a) => (view === "week" ? addDays(a, dir * 7) : new Date(a.getFullYear(), a.getMonth() + dir, 1)));
+    setAnchor((a) => (view === "month" ? new Date(a.getFullYear(), a.getMonth() + dir, 1) : addDays(a, dir * ({ day: 1, "3day": 3, week: 7, agenda: 7 } as const)[view])));
 
   const weekStart = startOfWeek(anchor);
+  const gridDays = view === "day" ? [anchor] : view === "3day" ? [0, 1, 2].map((i) => addDays(anchor, i)) : Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const title =
-    view === "week"
+    view === "day" ? anchor.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" })
+    : view === "3day" || view === "agenda" ? `${anchor.toLocaleDateString(undefined, { day: "numeric", month: "short" })} - ${addDays(anchor, view === "agenda" ? 29 : 2).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`
+    : view === "week"
       ? `${weekStart.toLocaleDateString(undefined, { day: "numeric", month: "short" })} - ${addDays(weekStart, 6).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`
       : `${MONTHS[anchor.getMonth()]} ${anchor.getFullYear()}`;
 
@@ -191,19 +199,29 @@ export default function CalendarView({ store, time }: { store: TaskStore; time: 
           <button aria-pressed={showTracked} onClick={() => setShowTracked(true)}>Plan + tracked</button>
         </div>
         <div className="seg">
-          <button aria-pressed={view === "week"} onClick={() => setView("week")}>Week</button>
-          <button aria-pressed={view === "month"} onClick={() => setView("month")}>Month</button>
+          {([["day", "Day"], ["3day", "3 days"], ["week", "Week"], ["month", "Month"], ["agenda", "Agenda"]] as [CalView, string][]).map(([v, label]) => (
+            <button key={v} aria-pressed={view === v} onClick={() => setView(v)}>{label}</button>
+          ))}
         </div>
       </div>
       {(error || time.error) && <div className="error-line">{error ?? time.error}</div>}
       {info && <div className="error-line" style={{ color: "var(--ink-2)" }} onClick={() => setInfo(null)}>{info}</div>}
       <div className="body">
         <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-          {view === "week" ? (
-            <WeekGrid weekStart={weekStart} timed={timed} tracked={showTracked ? tracked : null} allDay={allDay} sel={sel} onSelect={setSel}
-              onCreate={createAt} onMove={(t, start, end) => saveTask({ ...t, startAt: localIso(start), endAt: localIso(end), dueDate: ymd(start) })} />
+          {view === "agenda" ? (
+            <Agenda from={anchor} timed={timed} tracked={showTracked ? tracked : null} allDay={allDay} sel={sel} onSelect={setSel} listColor={listColor} />
+          ) : view !== "month" ? (
+            <WeekGrid days={gridDays} listColor={listColor} timed={timed} tracked={showTracked ? tracked : null} allDay={allDay} sel={sel} onSelect={setSel}
+              onCreate={createAt} onMove={(t, start, end) => saveTask({ ...t, startAt: localIso(start), endAt: localIso(end), dueDate: ymd(start) })}
+              onDropTask={(id, start) => {
+                const t = tasks.find((x) => x.id === id);
+                if (!t) return;
+                const mins = t.estimatePomos ? t.estimatePomos * 25 : 60;
+                saveTask({ ...t, startAt: localIso(start), endAt: localIso(new Date(start.getTime() + mins * 60000)), dueDate: ymd(start) });
+                setSel({ kind: "task", id });
+              }} />
           ) : (
-            <MonthGrid anchor={anchor} timed={timed} tracked={showTracked ? tracked : null} allDay={allDay} onPickDay={(d) => { setAnchor(d); setView("week"); }} />
+            <MonthGrid anchor={anchor} timed={timed} tracked={showTracked ? tracked : null} allDay={allDay} onPickDay={(d) => { setAnchor(d); setView("day"); }} />
           )}
         </div>
 
@@ -220,14 +238,14 @@ export default function CalendarView({ store, time }: { store: TaskStore; time: 
                 {selTask.note && <div className="cal-note">{selTask.note}</div>}
                 <div style={{ marginTop: 8 }}><TaskTimer task={selTask} time={time} /></div>
                 <div className="row" style={{ marginTop: 10 }}>
-                  <button className="btn" onClick={() => saveTask({ ...selTask, done: !selTask.done, completedAt: selTask.done ? null : new Date().toISOString() })}>
+                  <button className="btn" onClick={() => toggleDone(selTask)}>
                     {selTask.done ? "Reopen" : "Mark done"}
                   </button>
                   {selTask.startAt && (
                     <button className="btn ghost" onClick={() => saveTask({ ...selTask, startAt: null, endAt: null })}>Unschedule</button>
                   )}
                   <button className="btn ghost danger" onClick={async () => {
-                    if (await askConfirm(`Delete "${selTask.title}"?`, "Delete")) { deleteTask(selTask.id); setSel(null); }
+                    if (await askConfirm(`Move "${selTask.title}" to Trash?`, "Delete")) { trashTask(selTask); setSel(null); }
                   }}>Delete</button>
                 </div>
                 <div className="muted" style={{ fontSize: 11.5, marginTop: 8 }}>Drag the block to move it; drag its bottom edge to change the end time.</div>
@@ -248,6 +266,8 @@ export default function CalendarView({ store, time }: { store: TaskStore; time: 
                 onPickActivity={(id) => setSel({ kind: "activity", id })} onDeleted={() => setSel(null)} />
             )}
             {selAct && <ActivityDetail a={selAct} />}
+
+            <Unscheduled tasks={tasks} listColor={listColor} onPick={(id) => setSel({ kind: "task", id })} />
 
             <div className="section-head"><span className="label">Tracked today</span><span className="num muted">{fmtHm(todayTotal)}</span></div>
             {todayTracked.map((t) => (
@@ -391,7 +411,9 @@ function layoutDay<T extends { start: Date; end: Date }>(items: T[]) {
 const minutesOf = (d: Date) => d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
 
 function WeekGrid(props: {
-  weekStart: Date;
+  days: Date[];
+  listColor: (listId: string) => string;
+  onDropTask: (taskId: string, start: Date) => void;
   timed: Item[];
   tracked: Tracked[] | null;
   allDay: Map<string, Item[]>;
@@ -400,8 +422,7 @@ function WeekGrid(props: {
   onCreate: (start: Date, allDayDate?: string) => void;
   onMove: (t: Task, start: Date, end: Date) => void;
 }) {
-  const { weekStart, timed, tracked, allDay, sel, onSelect, onCreate, onMove } = props;
-  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  const { days, listColor, onDropTask, timed, tracked, allDay, sel, onSelect, onCreate, onMove } = props;
   const scroller = useRef<HTMLDivElement>(null);
   const cols = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<{ id: string; dMin: number; dDay: number; resize: boolean } | null>(null);
@@ -419,7 +440,7 @@ function WeekGrid(props: {
     onSelect({ kind: it.kind, id: it.id });
     if (it.kind !== "task") return;
     const sx = e.clientX, sy = e.clientY;
-    const colW = (cols.current?.getBoundingClientRect().width ?? 700) / 7;
+    const colW = (cols.current?.getBoundingClientRect().width ?? 700) / days.length;
     let cur = { id: it.id, dMin: 0, dDay: 0, resize };
     const move = (m: MouseEvent) => {
       const dMin = Math.round(((m.clientY - sy) / HOUR_PX) * 60 / SNAP_MIN) * SNAP_MIN;
@@ -493,7 +514,15 @@ function WeekGrid(props: {
               const dayItems = timed.filter((it) => ymd(it.start) === key);
               const dayTracked = (tracked ?? []).filter((t) => ymd(t.start) === key);
               return (
-                <div key={key} className="col" onClick={(e) => onColumnClick(e, d)}>
+                <div key={key} className="col" onClick={(e) => onColumnClick(e, d)}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    const id = e.dataTransfer.getData("text/task");
+                    if (!id) return;
+                    const r = e.currentTarget.getBoundingClientRect();
+                    const minutes = Math.floor(((e.clientY - r.top) / HOUR_PX) * 60 / SNAP_MIN) * SNAP_MIN;
+                    onDropTask(id, new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, minutes));
+                  }}>
                   {Array.from({ length: 24 }, (_, h) => <div key={h} className="hour-line" style={{ top: h * HOUR_PX }} />)}
                   {tracked && <div className="tracked-lane" style={{ left: `${planShare}%` }} />}
                   {layoutDay(dayItems).map(({ it, lane, lanes }) => {
@@ -509,6 +538,7 @@ function WeekGrid(props: {
                           left: `calc(${(lane / lanes) * planShare}% + 2px)`,
                           width: `calc(${planShare / lanes}% - 4px)`,
                           transform: dr && !dr.resize ? `translateX(${(dr.dDay * 100 * lanes * 100) / planShare}%)` : undefined,
+                          ...(it.kind === "task" && listColor(it.task.listId) ? { background: listColor(it.task.listId), color: inkOn(listColor(it.task.listId)) } : {}),
                         }}
                         onMouseDown={(e) => startDrag(e, it, false)}
                         onClick={(e) => e.stopPropagation()}>
@@ -589,6 +619,76 @@ function MonthGrid({ anchor, timed, tracked, allDay, onPickDay }: {
               </div>
             ))}
             {items.length > 4 && <div className="muted num" style={{ fontSize: 11 }}>+{items.length - 4} more</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------- unscheduled tasks (drag onto the grid) ----------
+
+function Unscheduled({ tasks, listColor, onPick }: { tasks: Task[]; listColor: (id: string) => string; onPick: (id: string) => void }) {
+  const [open, setOpen] = useState(true);
+  const today = ymd(new Date());
+  const items = tasks
+    .filter((t) => !t.done && !t.startAt)
+    .sort((a, b) => (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999") || b.priority - a.priority)
+    .slice(0, 40);
+  return (
+    <>
+      <div className="section-head" onClick={() => setOpen(!open)} style={{ cursor: "default" }}>
+        <span className="label">Unscheduled</span><span className="num muted">{open ? items.length : "+"}</span>
+      </div>
+      {open && items.map((t) => (
+        <div key={t.id} className="list-item" draggable title="Drag onto the calendar to give it a time"
+          onDragStart={(e) => e.dataTransfer.setData("text/task", t.id)} onClick={() => onPick(t.id)}>
+          <Dot color={listColor(t.listId)} size={7} />
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{t.title || "Untitled"}</span>
+          <span className={`count ${t.dueDate && t.dueDate < today ? "overdue-text" : ""}`}>{t.dueDate ? t.dueDate.slice(5) : ""}</span>
+        </div>
+      ))}
+      {open && !items.length && <div className="list-item muted">Every open task has a time.</div>}
+    </>
+  );
+}
+
+// ---------- agenda (next 30 days as a list) ----------
+
+function Agenda({ from, timed, tracked, allDay, sel, onSelect, listColor }: {
+  from: Date; timed: Item[]; tracked: Tracked[] | null; allDay: Map<string, Item[]>;
+  sel: Selection; onSelect: (s: Selection) => void; listColor: (id: string) => string;
+}) {
+  const days = Array.from({ length: 30 }, (_, i) => addDays(from, i));
+  const today = ymd(new Date());
+  return (
+    <div className="scroll agenda">
+      {days.map((d) => {
+        const k = ymd(d);
+        const items = [...(allDay.get(k) ?? []), ...timed.filter((it) => ymd(it.start) === k).sort((a, b) => a.start.getTime() - b.start.getTime())];
+        const sec = (tracked ?? []).filter((t) => ymd(t.start) === k).reduce((s, t) => s + (t.end.getTime() - t.start.getTime()) / 1000, 0);
+        if (!items.length && !sec && k !== today) return null;
+        return (
+          <div key={k} className={`agenda-day ${k === today ? "today" : ""}`}>
+            <div className="agenda-date">
+              <span className="label">{WEEKDAYS[(d.getDay() + 6) % 7]}</span>
+              <span className="num">{d.toLocaleDateString(undefined, { day: "numeric", month: "short" })}</span>
+              {sec > 0 && <span className="num muted" style={{ fontSize: 11 }}>{fmtHm(sec)} tracked</span>}
+            </div>
+            <div className="agenda-items">
+              {items.map((it) => {
+                const timedItem = ymd(it.start) === k && it.start.getHours() + it.start.getMinutes() > 0;
+                return (
+                  <div key={it.id + k} className={`list-item ${sel?.id === it.id ? "active" : ""}`} onClick={() => onSelect({ kind: it.kind, id: it.id })}>
+                    <span className="num muted" style={{ width: 86 }}>{timedItem ? `${hm(localIso(it.start))}-${hm(localIso(it.end))}` : "all day"}</span>
+                    <Dot color={it.kind === "task" ? listColor(it.task.listId) : ""} size={7} />
+                    <span className={it.kind === "task" && it.done ? "struck" : ""}>{it.title || "Untitled"}</span>
+                    {it.kind === "event" && <span className="count">{it.cal?.name ?? "calendar"}</span>}
+                  </div>
+                );
+              })}
+              {!items.length && <div className="list-item muted">Nothing planned.</div>}
+            </div>
           </div>
         );
       })}

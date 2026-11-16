@@ -1,0 +1,35 @@
+/* Categorical slots (validated reference palette) for the macro split. */
+.body {
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .body { --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; }
+}
+:root[data-theme="dark"] .body { --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; }
+
+.diet-top { display: grid; grid-template-columns: auto 1fr; gap: 14px 28px; padding: 14px; border-bottom: 1px solid var(--line); }
+.kcal-eq { display: flex; align-items: flex-end; gap: 12px; }
+.kcal-eq .big { font: 500 22px var(--mono); }
+.kcal-eq .neg { color: var(--accent); }
+.kcal-eq .op { font: 18px var(--mono); color: var(--ink-3); padding-bottom: 3px; }
+.macros { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 16px; }
+.macro { display: grid; gap: 3px; font-size: 12px; }
+.macro-bar { height: 4px; background: var(--surface-2); border-radius: 2px; overflow: hidden; }
+.macro-bar > div { height: 100%; background: var(--ink-2); }
+.macro-bar > div.over { background: var(--accent); }
+.macro-bar.water > div { background: #2a78d6; }
+.split { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; }
+.split-bar { flex: 1; max-width: 360px; height: 8px; display: flex; gap: 2px; }
+.split-bar span { height: 100%; border-radius: 2px; }
+.sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin: 0 4px 0 10px; }
+
+.meal { border-bottom: 1px solid var(--line); padding: 4px 0 8px; }
+.meal-head { display: flex; align-items: center; gap: 12px; padding: 8px 14px 4px; }
+.food-row { display: flex; align-items: center; gap: 10px; padding: 3px 14px 3px 28px; }
+.food-row:hover { background: var(--surface-2); }
+.diet-extras { display: flex; gap: 0; flex-wrap: wrap; }
+.side-box { flex: 1; min-width: 220px; padding: 12px 14px; display: grid; gap: 6px; border-right: 1px solid var(--line); align-content: start; }
+.food-pick { max-height: 280px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r); margin-top: 6px; }
+.quick-food, .targets { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 6px; }
+.qf { display: grid; gap: 2px; }
+.qf .input { width: 100%; }

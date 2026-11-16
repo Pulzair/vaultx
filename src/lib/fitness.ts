@@ -167,3 +167,146 @@ export function weeklyVolume(acts: Activity[], weeks = 12): WeekVolume[] {
   }
   return out;
 }
+
+// ---------- zones, stream metrics, records ----------
+
+export interface Zone { n: number; name: string; lo: number; hi: number }
+
+/** Five heart-rate zones by heart-rate reserve (Karvonen): 50-60-70-80-90-100%. */
+export function hrZones(p: Physiology): Zone[] {
+  const names = ["Recovery", "Endurance", "Tempo", "Threshold", "VO2max"];
+  const r = p.hrMax - p.hrRest;
+  return names.map((name, i) => ({
+    n: i + 1, name,
+    lo: Math.round(p.hrRest + r * (0.5 + i * 0.1)),
+    hi: Math.round(p.hrRest + r * (0.6 + i * 0.1)),
+  }));
+}
+
+/** Seconds per zone from an HR stream (samples below zone 1 count as zone 1). */
+export function zoneTimes(t: number[], hr: (number | null)[], zones: Zone[]): number[] {
+  const out = zones.map(() => 0);
+  for (let i = 1; i < t.length; i++) {
+    const h = hr[i];
+    const dt = t[i] - t[i - 1];
+    if (h == null || dt <= 0 || dt > 30) continue;
+    let z = zones.findIndex((zz) => h < zz.hi);
+    if (z < 0) z = zones.length - 1;
+    out[z] += dt;
+  }
+  return out;
+}
+
+/** Banister TRIMP integrated over the HR stream - exact for intervals, unlike the session average. */
+export function streamTrimp(t: number[], hr: (number | null)[], p: Physiology): number | null {
+  if (!t.length || !hr.some((h) => h != null)) return null;
+  const [k, b] = p.sex === "f" ? [0.86, 1.67] : [0.64, 1.92];
+  let sum = 0;
+  for (let i = 1; i < t.length; i++) {
+    const h = hr[i];
+    const dt = t[i] - t[i - 1];
+    if (h == null || dt <= 0 || dt > 30) continue;
+    const hrr = Math.min(1, Math.max(0, (h - p.hrRest) / (p.hrMax - p.hrRest)));
+    sum += (dt / 60) * hrr * k * Math.exp(b * hrr);
+  }
+  return sum;
+}
+
+/**
+ * Aerobic decoupling (Pa:HR): how much the speed-to-heart-rate ratio drops
+ * from the first to the second half. Under ~5% on a steady long run suggests
+ * good aerobic endurance.
+ */
+export function decoupling(t: number[], speed: (number | null)[], hr: (number | null)[]): number | null {
+  const pairs = t.map((_, i) => [speed[i], hr[i]] as const).filter(([s, h]) => s != null && h != null && s > 0.5 && h > 60);
+  if (pairs.length < 60) return null;
+  const half = Math.floor(pairs.length / 2);
+  const ratio = (a: (readonly [number | null, number | null])[]) =>
+    a.reduce((x, [s]) => x + s!, 0) / a.reduce((x, [, h]) => x + h!, 0);
+  const r1 = ratio(pairs.slice(0, half)), r2 = ratio(pairs.slice(half));
+  return ((r1 - r2) / r1) * 100;
+}
+
+/** Efficiency factor: metres per minute per heartbeat (higher = fitter at the same effort). */
+export function efficiencyFactor(a: Activity): number | null {
+  if (!a.distanceM || !a.avgHr || a.durationS < 600) return null;
+  return a.distanceM / (a.durationS / 60) / a.avgHr;
+}
+
+/** Acute:chronic workload ratio; 0.8-1.3 is the usual "sweet spot". */
+export function acwr(series: LoadPoint[]): number | null {
+  const last = series[series.length - 1];
+  return last && last.ctl > 1 ? last.atl / last.ctl : null;
+}
+
+export interface PR { label: string; value: string; date: string; id: string }
+
+const RUN_TARGETS = [
+  { label: "5K", m: 5000 }, { label: "10K", m: 10000 }, { label: "Half marathon", m: 21097.5 }, { label: "Marathon", m: 42195 },
+];
+
+/** Best efforts from whole activities: distance-matched race times and maxima per sport family. */
+export function personalRecords(acts: Activity[]): Record<Family, PR[]> {
+  const out = {} as Record<Family, PR[]>;
+  const byFam = new Map<Family, Activity[]>();
+  for (const a of acts) {
+    const f = sportFamily(a.sport);
+    byFam.set(f, [...(byFam.get(f) ?? []), a]);
+  }
+  for (const [fam, list] of byFam) {
+    const prs: PR[] = [];
+    const best = (pick: (a: Activity) => number | null | undefined, label: string, fmt: (v: number) => string) => {
+      let top: Activity | null = null, v = -Infinity;
+      for (const a of list) { const x = pick(a); if (x != null && x > v) { v = x; top = a; } }
+      if (top && v > 0) prs.push({ label, value: fmt(v), date: top.startTime.slice(0, 10), id: top.id });
+    };
+    best((a) => a.distanceM, "Longest distance", (v) => `${(v / 1000).toFixed(2)} km`);
+    best((a) => a.durationS, "Longest session", (v) => fmtHms(v));
+    best((a) => a.elevationM, "Most climbing", (v) => `${Math.round(v)} m`);
+    best((a) => a.calories, "Most calories", (v) => `${Math.round(v)} kcal`);
+    if (fam === "run") {
+      for (const r of RUN_TARGETS) {
+        let top: Activity | null = null, tBest = Infinity;
+        for (const a of list) {
+          if (!a.distanceM || a.distanceM < r.m * 0.98 || a.distanceM > r.m * 1.1) continue;
+          const t = a.durationS * (r.m / a.distanceM); // pro-rated to the exact distance
+          if (t < tBest) { tBest = t; top = a; }
+        }
+        if (top) prs.push({ label: `Fastest ${r.label}`, value: fmtHms(tBest), date: top.startTime.slice(0, 10), id: top.id });
+      }
+    }
+    if (fam === "ride" || fam === "run") {
+      best((a) => (a.distanceM && a.durationS > 600 ? (a.distanceM / a.durationS) * 3.6 : null), "Fastest average", (v) => fam === "run" ? `${fmtPace(3600 / v)}/km` : `${v.toFixed(1)} km/h`);
+    }
+    out[fam] = prs;
+  }
+  return out;
+}
+
+export function fmtHms(sec: number): string {
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.round(sec % 60);
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
+}
+
+export function fmtPace(secPerKm: number): string {
+  return `${Math.floor(secPerKm / 60)}:${String(Math.round(secPerKm % 60)).padStart(2, "0")}`;
+}
+
+export interface PeriodTotal { key: string; fam: Family; n: number; hours: number; km: number; trimp: number; elev: number }
+
+/** Totals per sport family per period key (e.g. "2026" or "2026-11"). */
+export function periodTotals(acts: Activity[], p: Physiology, keyOf: (a: Activity) => string): PeriodTotal[] {
+  const m = new Map<string, PeriodTotal>();
+  for (const a of acts) {
+    const fam = sportFamily(a.sport);
+    const k = `${keyOf(a)}|${fam}`;
+    const cur = m.get(k) ?? { key: keyOf(a), fam, n: 0, hours: 0, km: 0, trimp: 0, elev: 0 };
+    cur.n++;
+    cur.hours += a.durationS / 3600;
+    cur.km += (a.distanceM ?? 0) / 1000;
+    cur.trimp += trimp(a, p).value;
+    cur.elev += a.elevationM ?? 0;
+    m.set(k, cur);
+  }
+  return [...m.values()];
+}
