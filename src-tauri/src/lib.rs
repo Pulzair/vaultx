@@ -8,7 +8,12 @@ use std::sync::Mutex;
 
 use tauri::Manager;
 
+/// True for `tauri dev` / debug builds, false for installers.
+pub const DEV_BUILD: bool = cfg!(debug_assertions);
+
 pub struct AppState {
+    /// App-private data folder (DB, Garmin helper + tokens). Separate for dev builds.
+    pub data_dir: PathBuf,
     pub db: Mutex<rusqlite::Connection>,
     pub vault: Mutex<PathBuf>,
     pub garmin: Mutex<Option<fitness::GarminProc>>,
@@ -29,7 +34,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let data_dir = app.path().app_data_dir()?;
+            // Dev builds (`npm run tauri dev`) get their own database and vault
+            // so experiments never touch the data of an installed copy.
+            let data_dir = if DEV_BUILD {
+                let base = app.path().app_data_dir()?;
+                base.with_file_name(format!("{}.dev", base.file_name().unwrap().to_string_lossy()))
+            } else {
+                app.path().app_data_dir()?
+            };
             std::fs::create_dir_all(&data_dir)?;
             let conn = db::open(&data_dir.join("vaultx.db"))?;
 
@@ -41,12 +53,19 @@ pub fn run() {
                     app.path()
                         .document_dir()
                         .unwrap_or_else(|_| data_dir.clone())
-                        .join("VaultX")
+                        .join(if DEV_BUILD { "VaultX-Dev" } else { "VaultX" })
                 });
             std::fs::create_dir_all(&vault)?;
             seed_vault(&vault);
 
+            if DEV_BUILD {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.set_title("VaultX (dev data)");
+                }
+            }
+
             app.manage(AppState {
+                data_dir,
                 db: Mutex::new(conn),
                 vault: Mutex::new(vault),
                 garmin: Mutex::new(None),

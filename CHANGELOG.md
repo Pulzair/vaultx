@@ -15,3 +15,4 @@ The current build state and next steps are in [HANDOFF.md](HANDOFF.md).
 - **Training**: activity store (SQLite), `.FIT` import, Garmin Connect login (incl. MFA) and sync through a Python helper in a private venv, manual logging for any sport, Banister TRIMP, ATL/CTL/TSB, monotony/strain, effective VO2max, Daniels race predictions, weekly volume by sport family, load chart.
 - **Digest** (experimental): RSS/Atom headlines ranked by interest keywords.
 - Settings: vault folder, theme.
+- Dev builds use a separate vault (`Documents/VaultX-Dev`) and app-data folder (`*.dev`), and the window title says "dev data", so installed copies are never affected by development.

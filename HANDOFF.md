@@ -55,6 +55,22 @@ cargo test --manifest-path src-tauri/Cargo.toml   # Rust unit tests
 Prereqs: Node 20+, Rust stable, (Windows) MSVC C++ Build Tools + WebView2.
 Garmin sync additionally needs Python 3 on PATH (the app creates its own venv).
 
+### Testing vs developing (keep them apart)
+
+| | Installed copy (real use / testing) | Dev build (`npm run tauri dev`) |
+|---|---|---|
+| Built from | a release tag, via `npm run tauri build` | whatever is checked out |
+| Vault | `Documents\VaultX` | `Documents\VaultX-Dev` |
+| App data (DB, Garmin) | `%APPDATA%\io.github.vaultx.app` | `%APPDATA%\io.github.vaultx.app.dev` |
+| Window title | VaultX | VaultX (dev data) |
+
+The split is automatic (`DEV_BUILD = cfg!(debug_assertions)` in `src-tauri/src/lib.rs`), so dev experiments,
+schema changes and test data can never touch the installed copy's data.
+
+Git workflow: `main` stays releasable; do new work on a branch (`git switch -c feature/x`), merge when it
+works, then tag a release (`git tag v0.0.2`) and rebuild the installer from it. Installers land in
+`src-tauri/target/release/bundle/{nsis,msi}/`.
+
 ## Where things are
 
 ```

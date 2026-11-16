@@ -26,6 +26,10 @@
   files the user owns. Safe to sync with any file-sync tool or open in Obsidian.
 - **App-data folder** (`%APPDATA%\io.github.vaultx.app` on Windows): SQLite DB,
   Garmin venv and tokens. Never leaves the machine.
+- **Dev builds are isolated:** debug builds use `Documents/VaultX-Dev` and
+  `<app-data>.dev` instead, so development never touches real data
+  (`DEV_BUILD` in `lib.rs`; the path lives in `AppState.data_dir` - use it,
+  not `app.path().app_data_dir()`).
 
 ## Conventions
 

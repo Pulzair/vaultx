@@ -131,7 +131,7 @@ impl Drop for GarminProc {
 }
 
 fn garmin_dirs(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
-    let data = app.path().app_data_dir().str_err()?;
+    let data = app.state::<AppState>().data_dir.clone();
     Ok((data.join("garmin-venv"), data.join("garmin-tokens")))
 }
 
