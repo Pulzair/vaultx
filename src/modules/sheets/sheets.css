@@ -1,0 +1,8 @@
+.sheet-host { flex: 1; min-width: 0; position: relative; overflow: hidden; background: #fff; }
+
+/* Bring the third-party grid closer to the app's look. It paints cells on a
+   canvas with fixed colours, so it stays light even in dark mode for now. */
+.sheet-host .x-spreadsheet { font-family: var(--sans); }
+.sheet-host .x-spreadsheet-toolbar { border-bottom: 1px solid #d4d7db; background: #f6f7f8; }
+.sheet-host .x-spreadsheet-bottombar { border-top: 1px solid #d4d7db; background: #f6f7f8; }
+.sheet-host .x-spreadsheet-bottombar .x-spreadsheet-menu > li.active { color: #d9480f; border-top-color: #d9480f; }

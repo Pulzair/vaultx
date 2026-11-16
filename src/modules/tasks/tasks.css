@@ -1,0 +1,31 @@
+.quick { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.quick .input { width: 100%; }
+.quick-preview { font-size: 11.5px; color: var(--accent); padding-top: 5px; }
+
+.task-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--line);
+  cursor: default;
+}
+.task-row:hover { background: var(--surface-2); }
+.task-row.active { background: var(--accent-soft); }
+.task-row .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-row.done .title { color: var(--ink-3); text-decoration: line-through; }
+.task-row .prio { font: 600 12px var(--mono); color: var(--accent); width: 18px; flex-shrink: 0; }
+.task-row .when { color: var(--ink-3); font-size: 11.5px; min-width: 60px; text-align: right; }
+.task-row .when.overdue { color: var(--accent); }
+
+.check {
+  all: unset;
+  width: 13px; height: 13px; flex-shrink: 0;
+  border: 1.5px solid var(--ink-3);
+  border-radius: 2px;
+}
+.check:hover { border-color: var(--ink); }
+.check[aria-pressed="true"] { background: var(--ink-3); border-color: var(--ink-3); }
+
+.detail { padding: 14px 16px; flex: 1; }
+.detail-title { font-size: 16px; font-weight: 600; width: 100%; margin-bottom: 12px; }
+.detail-grid { display: grid; grid-template-columns: 70px 1fr; gap: 8px 10px; align-items: center; }
+.detail-grid .input[type="time"] { width: 96px; }

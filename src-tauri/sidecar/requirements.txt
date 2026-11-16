@@ -1,0 +1,2 @@
+# 0.3.x replaced garth with its own client; garmin_bridge.py supports both.
+garminconnect>=0.3.20,<0.4
