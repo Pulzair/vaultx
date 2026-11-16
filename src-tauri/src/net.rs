@@ -15,7 +15,7 @@ pub async fn fetch_text(url: String) -> Result<String, String> {
         return Err("Only http(s) and webcal links are supported".into());
     }
     let client = reqwest::Client::builder()
-        .user_agent("VaultX/0.0.1")
+        .user_agent(concat!("VaultX/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(20))
         .build()
         .str_err()?;

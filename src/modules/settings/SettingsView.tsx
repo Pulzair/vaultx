@@ -58,7 +58,7 @@ export default function SettingsView({ onVaultChange }: { onVaultChange: (p: str
         {msg && <div className="error-line" style={{ padding: 0, color: "var(--ink-2)" }}>{msg}</div>}
         <div className="field" style={{ marginTop: 24 }}>
           <span className="label">About</span>
-          <span className="muted" style={{ fontSize: 12 }}>VaultX 0.0.1 (draft 0). Open source under the MIT licence. All data stays on this computer.</span>
+          <span className="muted" style={{ fontSize: 12 }}>VaultX {__APP_VERSION__}. Open source under the MIT licence. All data stays on this computer.</span>
         </div>
       </div>
     </>

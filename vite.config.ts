@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 // Tauri expects a fixed port and no screen clearing so Rust errors stay visible.
 export default defineConfig({
   plugins: [react()],
+  define: { __APP_VERSION__: JSON.stringify(process.env.npm_package_version ?? "dev") },
   clearScreen: false,
   server: {
     port: 1420,

@@ -1,6 +1,6 @@
 [package]
 name = "vaultx"
-version = "0.0.1"
+version = "0.0.2"
 description = "Local-first desktop vault for notes, tasks, calendar, sheets and training data"
 authors = ["VaultX contributors"]
 license = "MIT"

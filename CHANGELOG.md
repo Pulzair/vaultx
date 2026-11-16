@@ -3,7 +3,7 @@
 All notable changes to VaultX. Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 The current build state and next steps are in [HANDOFF.md](HANDOFF.md).
 
-## [Unreleased]
+## [0.0.2] - 2026-11-16
 
 ### Added
 - **Time tracking**: stopwatch and 25-minute pomodoro timers started from any task (Tasks or Calendar) or from the rail; running timer always visible and survives restarts; sessions under a minute are discarded.
