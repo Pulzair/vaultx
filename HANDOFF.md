@@ -12,7 +12,7 @@ _Last updated: 2026-11-16 - Draft 0 (build 00)_
 A local-first desktop app for storing thoughts and plans: notes with a link
 graph, tasks + calendar, spreadsheets, a training-data hub (Garmin / .FIT) and
 an optional news digest. All data stays on the user's computer. Open source
-(MIT), public GitHub repo.
+(MIT), public GitHub repo: https://github.com/Pulzair/vaultx (branch `main`).
 
 ## Stack decisions (settled - don't relitigate without reason)
 
@@ -87,4 +87,4 @@ docs/                    DESIGN.md, ARCHITECTURE.md
 
 ## Session log (newest first)
 
-- **2026-11-16 - Draft 0.** Toolchain installed (Node, Rust, MSVC Build Tools, gh). Full scaffold written: Rust backend (SQLite, vault I/O, FIT, Garmin bridge, fetch), React UI with all six modules. Verified: frontend typechecks + builds, Rust compiles with 3 passing unit tests, `tauri dev` launches and creates the vault (`Documents/VaultX/Welcome.md`) and DB; Garmin bridge protocol smoke-tested offline against garminconnect 0.3.20. **Not yet verified:** clicking through every module inside the native window, a real Garmin login, a real ICS feed. GitHub remote not yet created (needs `gh auth login`). See CHANGELOG for detail.
+- **2026-11-16 - Draft 0.** Toolchain installed (Node, Rust, MSVC Build Tools, gh). Full scaffold written: Rust backend (SQLite, vault I/O, FIT, Garmin bridge, fetch), React UI with all six modules. Verified: frontend typechecks + builds, Rust compiles with 3 passing unit tests, `tauri dev` launches and creates the vault (`Documents/VaultX/Welcome.md`) and DB; Garmin bridge protocol smoke-tested offline against garminconnect 0.3.20. **Not yet verified:** clicking through every module inside the native window, a real Garmin login, a real ICS feed. Published to https://github.com/Pulzair/vaultx. See CHANGELOG for detail.
