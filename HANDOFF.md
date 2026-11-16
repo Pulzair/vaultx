@@ -5,7 +5,7 @@
 > each meaningful step) so a new session - human or AI - can resume in minutes.
 > Detailed history lives in [CHANGELOG.md](CHANGELOG.md).
 
-_Last updated: 2026-11-16 - v0.0.3 work on branch `feature/v0.0.3` (released: v0.0.2 on `main`)_
+_Last updated: 2026-11-16 - v0.0.3 released on `main` (tag `v0.0.3`)_
 
 ## What VaultX is
 
@@ -114,7 +114,6 @@ src-tauri/
 
 1. **Try v0.0.3 in the native window** (everything was click-tested in the browser mock; backend verified with the real binary: migration from a v0.0.2 DB, local API, export).
 2. **Real Garmin account test of `detail` and `wellness`** commands (method names verified against garminconnect 0.3.20, responses not yet seen live).
-3. Merge `feature/v0.0.3` -> `main`, bump version to 0.0.3 (package.json, Cargo.toml, tauri.conf.json), tag, build installer.
 4. Two-way Google Calendar sync (OAuth client needed from the user).
 5. Training: Runalyze "marathon shape" adjustment of predictions; best efforts from streams (fastest 1k/5k inside longer runs); route maps (needs GPS in detail).
 6. Diet: barcode / public food database lookup (Open Food Facts) - currently manual library only.
@@ -126,6 +125,6 @@ src-tauri/
 
 ## Session log (newest first)
 
-- **2026-11-16 - v0.0.3 build (branch `feature/v0.0.3`).** From user testing of v0.0.2: fixed calendar not scrolling (CSS grid row grew to content; `.shell` now `grid-template-rows: minmax(0,1fr)`). Researched TickTick and built nearly all of its feature set except the Eisenhower matrix (see Tasks/Calendar/Time/Habits rows). Added Diet, Training overhaul with Garmin extras/streams/wellness, data export/import/CSV/local API, Ctrl+K palette, toasts, notifications. Verified: `tsc`, `vite build`, 4 Rust tests (incl. import round-trip with schema drift), browser-mock click-through of every module, real binary against a genuine v0.0.2-schema DB (migrated 14->22 task columns, data intact), local API auth/read-only/export. **Not verified:** native window click-through, live Garmin detail/wellness responses, notifications on Windows.
+- **2026-11-16 - v0.0.3 released** (merged from `feature/v0.0.3`, tagged, installer built). From user testing of v0.0.2: fixed calendar not scrolling (CSS grid row grew to content; `.shell` now `grid-template-rows: minmax(0,1fr)`). Researched TickTick and built nearly all of its feature set except the Eisenhower matrix (see Tasks/Calendar/Time/Habits rows). Added Diet, Training overhaul with Garmin extras/streams/wellness, data export/import/CSV/local API, Ctrl+K palette, toasts, notifications. Verified: `tsc`, `vite build`, 4 Rust tests (incl. import round-trip with schema drift), browser-mock click-through of every module, real binary against a genuine v0.0.2-schema DB (migrated 14->22 task columns, data intact), local API auth/read-only/export. **Not verified:** native window click-through, live Garmin detail/wellness responses, notifications on Windows.
 - **2026-11-16 - v0.0.2 Time tracking.** Timers, pomodoro, plan vs tracked calendar, browser mock backend. Released as v0.0.2.
 - **2026-11-16 - Draft 0 (v0.0.1).** Full scaffold, toolchain, repo published.

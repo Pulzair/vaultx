@@ -3,7 +3,7 @@
 All notable changes to VaultX. Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 The current build state and next steps are in [HANDOFF.md](HANDOFF.md).
 
-## [Unreleased] - 0.0.3
+## [0.0.3] - 2026-11-16
 
 ### Fixed
 - Calendar (and any tall view) no longer stretches the window past the screen; the week grid scrolls to 23:00.
