@@ -1,36 +1,50 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errText, uid } from "../../lib/api";
 import { askConfirm, askText } from "../../lib/dialog";
-import { MONTHS, WEEKDAYS, addDays, hm, localIso, parseLocal, startOfWeek, ymd } from "../../lib/dates";
+import { MONTHS, WEEKDAYS, addDays, fmtDuration, hm, localIso, parseLocal, startOfWeek, ymd } from "../../lib/dates";
+import { paceText } from "../../lib/fitness";
 import { parseIcs, tasksToIcs } from "../../lib/ics";
 import { newTask, type TaskStore } from "../../lib/taskStore";
-import type { Calendar, ExternalEvent, Task } from "../../lib/types";
+import { entrySeconds, fmtHm, localStamp, type TimeStore } from "../../lib/timeStore";
+import type { Activity, Calendar, ExternalEvent, Task, TimeEntry } from "../../lib/types";
+import TaskTimer from "../../components/TaskTimer";
 import "./calendar.css";
 
 const HOUR_PX = 44;
 const SNAP_MIN = 15;
+/** Share of a day column used by planned items when the tracked strip is shown. */
+const PLAN_SHARE = 66;
 
 type Item =
   | { kind: "task"; id: string; title: string; start: Date; end: Date; done: boolean; task: Task }
   | { kind: "event"; id: string; title: string; start: Date; end: Date; ev: ExternalEvent; cal?: Calendar };
 
-type Selection = { kind: "task"; id: string } | { kind: "event"; id: string } | null;
+/** Actual time spent: timer entries and recorded workouts. */
+type Tracked =
+  | { kind: "entry"; id: string; title: string; start: Date; end: Date; entry: TimeEntry; live: boolean }
+  | { kind: "activity"; id: string; title: string; start: Date; end: Date; act: Activity };
 
-export default function CalendarView({ store }: { store: TaskStore }) {
+type Selection = { kind: "task" | "event" | "entry" | "activity"; id: string } | null;
+
+export default function CalendarView({ store, time }: { store: TaskStore; time: TimeStore }) {
   const { tasks, saveTask, deleteTask } = store;
   const [view, setView] = useState<"week" | "month">("week");
   const [anchor, setAnchor] = useState(() => new Date());
   const [calendars, setCalendars] = useState<Calendar[]>([]);
   const [events, setEvents] = useState<ExternalEvent[]>([]);
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [showTracked, setShowTracked] = useState(true);
   const [sel, setSel] = useState<Selection>(null);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const loadExternal = useCallback(async () => {
     try {
-      const [c, e] = await Promise.all([api.listCalendars(), api.listExternalEvents()]);
+      const [c, e, a] = await Promise.all([api.listCalendars(), api.listExternalEvents(), api.listActivities()]);
       setCalendars(c);
       setEvents(e);
+      setActivities(a);
     } catch (e) {
       setError(errText(e));
     }
@@ -56,6 +70,24 @@ export default function CalendarView({ store }: { store: TaskStore }) {
     }
     return out;
   }, [tasks, events, calById]);
+
+  const tracked: Tracked[] = useMemo(() => {
+    const out: Tracked[] = time.entries.map((e) => {
+      const start = parseLocal(e.startAt);
+      return {
+        kind: "entry" as const, id: e.id, title: e.title, entry: e, live: e.endAt === null,
+        start, end: e.endAt ? parseLocal(e.endAt) : time.now,
+      };
+    });
+    for (const a of activities) {
+      const start = parseLocal(a.startTime);
+      out.push({
+        kind: "activity", id: a.id, title: a.name || a.sport.replace(/_/g, " "), act: a,
+        start, end: new Date(start.getTime() + a.durationS * 1000),
+      });
+    }
+    return out;
+  }, [time.entries, time.now, activities]);
 
   /** Items with no time of day, keyed by YYYY-MM-DD. */
   const allDay = useMemo(() => {
@@ -130,16 +162,20 @@ export default function CalendarView({ store }: { store: TaskStore }) {
     try {
       const path = await api.exportFile("vaultx-tasks.ics", tasksToIcs(tasks.filter((t) => !t.done)));
       setError(null);
-      alertLine(`Exported to ${path} - import it in Google Calendar (Settings > Import).`);
+      setInfo(`Exported to ${path} - import it in Google Calendar (Settings > Import).`);
     } catch (e) {
       setError(errText(e));
     }
   };
-  const [info, setInfo] = useState<string | null>(null);
-  const alertLine = (s: string) => setInfo(s);
 
   const selTask = sel?.kind === "task" ? tasks.find((t) => t.id === sel.id) : undefined;
   const selEvent = sel?.kind === "event" ? events.find((e) => e.id === sel.id) : undefined;
+  const selEntry = sel?.kind === "entry" ? time.entries.find((e) => e.id === sel.id) : undefined;
+  const selAct = sel?.kind === "activity" ? activities.find((a) => a.id === sel.id) : undefined;
+
+  const today = ymd(new Date());
+  const todayTracked = tracked.filter((t) => ymd(t.start) === today).sort((a, b) => a.start.getTime() - b.start.getTime());
+  const todayTotal = todayTracked.reduce((s, t) => s + (t.end.getTime() - t.start.getTime()) / 1000, 0);
 
   return (
     <>
@@ -151,23 +187,27 @@ export default function CalendarView({ store }: { store: TaskStore }) {
         <button className="btn" onClick={() => setAnchor(new Date())}>Today</button>
         <button className="btn ghost" onClick={() => step(1)} aria-label="Next">&rarr;</button>
         <div className="seg">
+          <button aria-pressed={!showTracked} onClick={() => setShowTracked(false)}>Plan</button>
+          <button aria-pressed={showTracked} onClick={() => setShowTracked(true)}>Plan + tracked</button>
+        </div>
+        <div className="seg">
           <button aria-pressed={view === "week"} onClick={() => setView("week")}>Week</button>
           <button aria-pressed={view === "month"} onClick={() => setView("month")}>Month</button>
         </div>
       </div>
-      {error && <div className="error-line">{error}</div>}
+      {(error || time.error) && <div className="error-line">{error ?? time.error}</div>}
       {info && <div className="error-line" style={{ color: "var(--ink-2)" }} onClick={() => setInfo(null)}>{info}</div>}
       <div className="body">
         <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
           {view === "week" ? (
-            <WeekGrid weekStart={weekStart} timed={timed} allDay={allDay} sel={sel} onSelect={setSel}
+            <WeekGrid weekStart={weekStart} timed={timed} tracked={showTracked ? tracked : null} allDay={allDay} sel={sel} onSelect={setSel}
               onCreate={createAt} onMove={(t, start, end) => saveTask({ ...t, startAt: localIso(start), endAt: localIso(end), dueDate: ymd(start) })} />
           ) : (
-            <MonthGrid anchor={anchor} timed={timed} allDay={allDay} onPickDay={(d) => { setAnchor(d); setView("week"); }} />
+            <MonthGrid anchor={anchor} timed={timed} tracked={showTracked ? tracked : null} allDay={allDay} onPickDay={(d) => { setAnchor(d); setView("week"); }} />
           )}
         </div>
 
-        <div className="pane" style={{ width: 270, borderRight: 0, borderLeft: "1px solid var(--line)" }}>
+        <div className="pane" style={{ width: 280, borderRight: 0, borderLeft: "1px solid var(--line)" }}>
           <div className="scroll" style={{ flex: 1 }}>
             {selTask && (
               <div className="cal-detail">
@@ -178,6 +218,7 @@ export default function CalendarView({ store }: { store: TaskStore }) {
                   {selTask.startAt ? `${selTask.startAt.slice(0, 10)}  ${hm(selTask.startAt)}-${hm(selTask.endAt)}` : selTask.dueDate}
                 </div>
                 {selTask.note && <div className="cal-note">{selTask.note}</div>}
+                <div style={{ marginTop: 8 }}><TaskTimer task={selTask} time={time} /></div>
                 <div className="row" style={{ marginTop: 10 }}>
                   <button className="btn" onClick={() => saveTask({ ...selTask, done: !selTask.done, completedAt: selTask.done ? null : new Date().toISOString() })}>
                     {selTask.done ? "Reopen" : "Mark done"}
@@ -202,6 +243,23 @@ export default function CalendarView({ store }: { store: TaskStore }) {
                 <div className="muted" style={{ fontSize: 11.5, marginTop: 8 }}>Read-only - edit it in its own calendar app.</div>
               </div>
             )}
+            {selEntry && (
+              <EntryDetail key={selEntry.id} entry={selEntry} time={time} tasks={tasks} activities={activities}
+                onPickActivity={(id) => setSel({ kind: "activity", id })} onDeleted={() => setSel(null)} />
+            )}
+            {selAct && <ActivityDetail a={selAct} />}
+
+            <div className="section-head"><span className="label">Tracked today</span><span className="num muted">{fmtHm(todayTotal)}</span></div>
+            {todayTracked.map((t) => (
+              <div key={t.id} className={`list-item ${sel?.id === t.id ? "active" : ""}`} onClick={() => setSel({ kind: t.kind, id: t.id })}>
+                <span className="num muted" style={{ fontSize: 11 }}>{hm(localIso(t.start))}</span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{t.title}</span>
+                <span className="count">{t.kind === "activity" ? "workout " : t.live ? "live " : ""}{fmtHm((t.end.getTime() - t.start.getTime()) / 1000)}</span>
+              </div>
+            ))}
+            {!todayTracked.length && (
+              <div className="list-item muted" style={{ whiteSpace: "normal" }}>Start a timer from a task, or from the rail. Synced workouts appear here too.</div>
+            )}
 
             <div className="section-head"><span className="label">Linked calendars</span>
               <button className="btn ghost" style={{ padding: "0 6px" }} onClick={addCalendar} title="Add an ICS calendar link">+</button>
@@ -223,7 +281,7 @@ export default function CalendarView({ store }: { store: TaskStore }) {
               </div>
             )}
             <div className="section-head"><span className="label">Export</span></div>
-            <div style={{ padding: "0 14px" }}>
+            <div style={{ padding: "0 14px 14px" }}>
               <button className="btn" onClick={exportIcs}>Export tasks as .ics</button>
             </div>
           </div>
@@ -233,10 +291,92 @@ export default function CalendarView({ store }: { store: TaskStore }) {
   );
 }
 
+// ---------- detail panels for tracked time ----------
+
+const overlaps = (aS: Date, aE: Date, bS: Date, bE: Date) => aS < bE && bS < aE;
+
+function EntryDetail({ entry, time, tasks, activities, onPickActivity, onDeleted }: {
+  entry: TimeEntry; time: TimeStore; tasks: Task[]; activities: Activity[];
+  onPickActivity: (id: string) => void; onDeleted: () => void;
+}) {
+  const live = entry.endAt === null;
+  const start = parseLocal(entry.startAt);
+  const end = entry.endAt ? parseLocal(entry.endAt) : time.now;
+  const task = tasks.find((t) => t.id === entry.taskId);
+  const workouts = activities.filter((a) => {
+    const s = parseLocal(a.startTime);
+    return overlaps(start, end, s, new Date(s.getTime() + a.durationS * 1000));
+  });
+
+  /** Edit the clock time of start or end, keeping the entry's date. */
+  const setClock = (which: "startAt" | "endAt", v: string) => {
+    if (!v) return;
+    const base = which === "startAt" ? start : end;
+    const [h, m] = v.split(":").map(Number);
+    const d = new Date(base.getFullYear(), base.getMonth(), base.getDate(), h, m, 0);
+    const next = { ...entry, [which]: localStamp(d) };
+    if (parseLocal(next.endAt ?? localStamp(time.now)) > parseLocal(next.startAt)) time.save(next);
+  };
+
+  return (
+    <div className="cal-detail">
+      <div className="label">{live ? "Timer running" : entry.mode === "pomodoro" ? "Pomodoro" : "Tracked time"}</div>
+      <input className="input bare" style={{ fontWeight: 600, fontSize: 14, width: "100%" }} value={entry.title}
+        onChange={(e) => time.save({ ...entry, title: e.target.value })} />
+      <div className="row">
+        <input type="time" className="input" value={hm(localIso(start))} onChange={(e) => setClock("startAt", e.target.value)} />
+        <span className="muted">to</span>
+        {live ? <span className="num muted">now</span> : (
+          <input type="time" className="input" value={hm(localIso(end))} onChange={(e) => setClock("endAt", e.target.value)} />
+        )}
+      </div>
+      <div className="num muted">{start.toLocaleDateString()} · {fmtHm(entrySeconds(entry, time.now))}</div>
+      {task && <div className="muted">for task <span style={{ color: "var(--ink)" }}>{task.title}</span></div>}
+      <textarea className="textarea" rows={3} placeholder="What did you get done?" value={entry.note}
+        style={{ width: "100%", resize: "vertical", marginTop: 4 }}
+        onChange={(e) => time.save({ ...entry, note: e.target.value })} />
+      {workouts.length > 0 && (
+        <>
+          <div className="label" style={{ marginTop: 6 }}>Overlapping workout</div>
+          {workouts.map((a) => (
+            <div key={a.id} className="list-item" style={{ padding: "3px 0" }} onClick={() => onPickActivity(a.id)}>
+              {a.name || a.sport} <span className="count">{fmtDuration(a.durationS)}{a.avgHr ? ` · ${Math.round(a.avgHr)} bpm` : ""}</span>
+            </div>
+          ))}
+        </>
+      )}
+      <div className="row" style={{ marginTop: 6 }}>
+        {live && <button className="btn" onClick={time.stop}>Stop</button>}
+        <button className="btn ghost danger" onClick={async () => {
+          if (await askConfirm("Delete this time entry?", "Delete")) { await time.remove(entry.id); onDeleted(); }
+        }}>Delete entry</button>
+      </div>
+    </div>
+  );
+}
+
+function ActivityDetail({ a }: { a: Activity }) {
+  return (
+    <div className="cal-detail">
+      <div className="label">Workout · {a.source}</div>
+      <div style={{ fontWeight: 600, fontSize: 14 }}>{a.name || a.sport.replace(/_/g, " ")}</div>
+      <div className="num muted">{a.startTime.replace("T", " ").slice(0, 16)} · {fmtDuration(a.durationS)}</div>
+      <div className="act-grid num">
+        {a.distanceM ? <><span className="muted">distance</span><span>{(a.distanceM / 1000).toFixed(2)} km</span></> : null}
+        {paceText(a) ? <><span className="muted">pace</span><span>{paceText(a)}</span></> : null}
+        {a.avgHr ? <><span className="muted">avg HR</span><span>{Math.round(a.avgHr)} bpm</span></> : null}
+        {a.elevationM ? <><span className="muted">ascent</span><span>{Math.round(a.elevationM)} m</span></> : null}
+        {a.calories ? <><span className="muted">calories</span><span>{Math.round(a.calories)}</span></> : null}
+      </div>
+      <div className="muted" style={{ fontSize: 11.5 }}>From Training. Edit or delete it there.</div>
+    </div>
+  );
+}
+
 // ---------- week grid ----------
 
 /** Greedy lane assignment so overlapping blocks sit side by side. */
-function layoutDay(items: Item[]) {
+function layoutDay<T extends { start: Date; end: Date }>(items: T[]) {
   const sorted = [...items].sort((a, b) => a.start.getTime() - b.start.getTime() || b.end.getTime() - a.end.getTime());
   const laneEnds: number[] = [];
   const placed = sorted.map((it) => {
@@ -248,21 +388,25 @@ function layoutDay(items: Item[]) {
   return placed.map((p) => ({ ...p, lanes: laneEnds.length }));
 }
 
+const minutesOf = (d: Date) => d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
+
 function WeekGrid(props: {
   weekStart: Date;
   timed: Item[];
+  tracked: Tracked[] | null;
   allDay: Map<string, Item[]>;
   sel: Selection;
   onSelect: (s: Selection) => void;
   onCreate: (start: Date, allDayDate?: string) => void;
   onMove: (t: Task, start: Date, end: Date) => void;
 }) {
-  const { weekStart, timed, allDay, sel, onSelect, onCreate, onMove } = props;
+  const { weekStart, timed, tracked, allDay, sel, onSelect, onCreate, onMove } = props;
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const scroller = useRef<HTMLDivElement>(null);
   const cols = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<{ id: string; dMin: number; dDay: number; resize: boolean } | null>(null);
   const [now, setNow] = useState(new Date());
+  const planShare = tracked ? PLAN_SHARE : 100;
 
   useEffect(() => {
     scroller.current?.scrollTo({ top: HOUR_PX * 7 });
@@ -314,11 +458,16 @@ function WeekGrid(props: {
     <div className="week">
       <div className="week-head">
         <div className="gutter" />
-        {days.map((d) => (
-          <div key={ymd(d)} className={`day-head ${ymd(d) === today ? "today" : ""}`}>
-            <span className="label">{WEEKDAYS[(d.getDay() + 6) % 7]}</span> <span className="num">{d.getDate()}</span>
-          </div>
-        ))}
+        {days.map((d) => {
+          const k = ymd(d);
+          const sec = (tracked ?? []).filter((t) => ymd(t.start) === k).reduce((s, t) => s + (t.end.getTime() - t.start.getTime()) / 1000, 0);
+          return (
+            <div key={k} className={`day-head ${k === today ? "today" : ""}`}>
+              <span className="label">{WEEKDAYS[(d.getDay() + 6) % 7]}</span> <span className="num">{d.getDate()}</span>
+              {sec > 0 && <span className="num muted day-tracked" title="Tracked time">{fmtHm(sec)}</span>}
+            </div>
+          );
+        })}
       </div>
       <div className="week-allday">
         <div className="gutter label" style={{ fontSize: 9.5 }}>all day</div>
@@ -342,12 +491,14 @@ function WeekGrid(props: {
             {days.map((d) => {
               const key = ymd(d);
               const dayItems = timed.filter((it) => ymd(it.start) === key);
+              const dayTracked = (tracked ?? []).filter((t) => ymd(t.start) === key);
               return (
                 <div key={key} className="col" onClick={(e) => onColumnClick(e, d)}>
                   {Array.from({ length: 24 }, (_, h) => <div key={h} className="hour-line" style={{ top: h * HOUR_PX }} />)}
+                  {tracked && <div className="tracked-lane" style={{ left: `${planShare}%` }} />}
                   {layoutDay(dayItems).map(({ it, lane, lanes }) => {
                     const dr = drag?.id === it.id ? drag : null;
-                    const startMin = it.start.getHours() * 60 + it.start.getMinutes() + (dr && !dr.resize ? dr.dMin : 0);
+                    const startMin = minutesOf(it.start) + (dr && !dr.resize ? dr.dMin : 0);
                     const durMin = Math.max(SNAP_MIN, (it.end.getTime() - it.start.getTime()) / 60000 + (dr?.resize ? dr.dMin : 0));
                     return (
                       <div key={it.id}
@@ -355,9 +506,9 @@ function WeekGrid(props: {
                         style={{
                           top: (startMin / 60) * HOUR_PX,
                           height: Math.max(16, (durMin / 60) * HOUR_PX - 2),
-                          left: `calc(${(lane / lanes) * 100}% + 2px)`,
-                          width: `calc(${100 / lanes}% - 4px)`,
-                          transform: dr && !dr.resize ? `translateX(${dr.dDay * 100 * lanes}%)` : undefined,
+                          left: `calc(${(lane / lanes) * planShare}% + 2px)`,
+                          width: `calc(${planShare / lanes}% - 4px)`,
+                          transform: dr && !dr.resize ? `translateX(${(dr.dDay * 100 * lanes * 100) / planShare}%)` : undefined,
                         }}
                         onMouseDown={(e) => startDrag(e, it, false)}
                         onClick={(e) => e.stopPropagation()}>
@@ -367,8 +518,26 @@ function WeekGrid(props: {
                       </div>
                     );
                   })}
+                  {layoutDay(dayTracked).map(({ it, lane, lanes }) => {
+                    const share = 100 - planShare;
+                    const durMin = Math.max(1, (it.end.getTime() - it.start.getTime()) / 60000);
+                    return (
+                      <div key={it.id}
+                        className={`tracked ${it.kind} ${it.kind === "entry" && it.live ? "live" : ""} ${sel?.id === it.id ? "sel" : ""}`}
+                        title={`${it.title} · ${fmtHm(durMin * 60)}`}
+                        style={{
+                          top: (minutesOf(it.start) / 60) * HOUR_PX,
+                          height: Math.max(4, (durMin / 60) * HOUR_PX - 1),
+                          left: `calc(${planShare + (lane / lanes) * share}% + 1px)`,
+                          width: `calc(${share / lanes}% - 3px)`,
+                        }}
+                        onClick={(e) => { e.stopPropagation(); onSelect({ kind: it.kind, id: it.id }); }}>
+                        {durMin >= 25 && <div className="tracked-title">{it.title}</div>}
+                      </div>
+                    );
+                  })}
                   {key === today && (
-                    <div className="now-line" style={{ top: ((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_PX }} />
+                    <div className="now-line" style={{ top: (minutesOf(now) / 60) * HOUR_PX }} />
                   )}
                 </div>
               );
@@ -382,8 +551,8 @@ function WeekGrid(props: {
 
 // ---------- month grid ----------
 
-function MonthGrid({ anchor, timed, allDay, onPickDay }: {
-  anchor: Date; timed: Item[]; allDay: Map<string, Item[]>; onPickDay: (d: Date) => void;
+function MonthGrid({ anchor, timed, tracked, allDay, onPickDay }: {
+  anchor: Date; timed: Item[]; tracked: Tracked[] | null; allDay: Map<string, Item[]>; onPickDay: (d: Date) => void;
 }) {
   const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
   const start = startOfWeek(first);
@@ -394,16 +563,25 @@ function MonthGrid({ anchor, timed, allDay, onPickDay }: {
     const k = ymd(it.start);
     byDay.set(k, [...(byDay.get(k) ?? []), it]);
   }
+  const trackedByDay = new Map<string, number>();
+  for (const t of tracked ?? []) {
+    const k = ymd(t.start);
+    trackedByDay.set(k, (trackedByDay.get(k) ?? 0) + (t.end.getTime() - t.start.getTime()) / 1000);
+  }
   return (
     <div className="month">
       {WEEKDAYS.map((w) => <div key={w} className="label month-wd">{w}</div>)}
       {cells.map((d) => {
         const k = ymd(d);
         const items = [...(allDay.get(k) ?? []), ...(byDay.get(k) ?? []).sort((a, b) => a.start.getTime() - b.start.getTime())];
+        const sec = trackedByDay.get(k);
         return (
           <div key={k} className={`month-cell ${d.getMonth() !== anchor.getMonth() ? "out" : ""} ${k === today ? "today" : ""}`}
             onClick={() => onPickDay(d)}>
-            <div className="num month-date">{d.getDate()}</div>
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <span className="num month-date">{d.getDate()}</span>
+              {sec ? <span className="num muted" style={{ fontSize: 10.5 }} title="Tracked time">{fmtHm(sec)}</span> : null}
+            </div>
             {items.slice(0, 4).map((it) => (
               <div key={it.id + k} className={`month-item ${it.kind} ${it.kind === "task" && it.done ? "done" : ""}`}>
                 {ymd(it.start) === k && it.start.getHours() + it.start.getMinutes() > 0 && <span className="num muted">{hm(localIso(it.start))} </span>}

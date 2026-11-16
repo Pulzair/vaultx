@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "./lib/api";
 import { useTaskStore } from "./lib/taskStore";
+import { useTimeStore } from "./lib/timeStore";
+import TimerWidget from "./components/TimerWidget";
 import NotesView from "./modules/notes/NotesView";
 import TasksView from "./modules/tasks/TasksView";
 import CalendarView from "./modules/calendar/CalendarView";
@@ -24,6 +26,7 @@ export default function App() {
   const [active, setActive] = useState<ModuleId>("notes");
   const [vaultPath, setVaultPath] = useState("");
   const taskStore = useTaskStore();
+  const timeStore = useTimeStore();
 
   useEffect(() => {
     api.vaultInfo().then((v) => setVaultPath(v.path)).catch(() => {});
@@ -69,6 +72,7 @@ export default function App() {
           ))}
         </nav>
         <div className="spacer" />
+        <TimerWidget store={timeStore} />
         <nav>
           <button aria-current={active === "settings" ? "page" : undefined} onClick={() => setActive("settings")}>
             Settings <kbd>^,</kbd>
@@ -78,8 +82,8 @@ export default function App() {
       </aside>
       <main className="main">
         {active === "notes" && <NotesView />}
-        {active === "tasks" && <TasksView store={taskStore} />}
-        {active === "calendar" && <CalendarView store={taskStore} />}
+        {active === "tasks" && <TasksView store={taskStore} time={timeStore} />}
+        {active === "calendar" && <CalendarView store={taskStore} time={timeStore} />}
         {active === "sheets" && <SheetsView />}
         {active === "training" && <FitnessView />}
         {active === "digest" && <DigestView />}

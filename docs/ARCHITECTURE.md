@@ -10,7 +10,7 @@
 ┌──────────────────────── Rust core (src-tauri/src) ─────────────────────────────────────┐
 │ lib.rs   AppState { db: Mutex<Connection>, vault: Mutex<PathBuf>, garmin: Mutex<..> }   │
 │ db.rs    SQLite  <app-data>/vaultx.db   lists, tasks, calendars, external_events,       │
-│                                         activities, settings                            │
+│                                         time_entries, activities, settings              │
 │ vault.rs files   <vault>/**.md|txt, <vault>/Sheets/*.vxsheet, Exports/, .trash/         │
 │ fitness.rs  .FIT -> activities ; spawns Python helper  ──stdin/stdout JSON lines──┐     │
 │ net.rs   fetch_text (ICS, RSS)                                                     │     │

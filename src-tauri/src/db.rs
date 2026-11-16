@@ -66,6 +66,17 @@ CREATE TABLE IF NOT EXISTS activities (
     raw TEXT,
     UNIQUE(source, external_id)
 );
+CREATE TABLE IF NOT EXISTS time_entries (
+    id TEXT PRIMARY KEY,
+    task_id TEXT,
+    title TEXT NOT NULL DEFAULT '',
+    start_at TEXT NOT NULL,
+    end_at TEXT,
+    mode TEXT NOT NULL DEFAULT 'stopwatch',
+    target_min INTEGER,
+    note TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS time_entries_start ON time_entries(start_at);
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -372,6 +383,74 @@ pub fn list_external_events(state: State<AppState>) -> Result<Vec<ExternalEvent>
         })
         .str_err()?;
     rows.collect::<Result<_, _>>().str_err()
+}
+
+// ---------- time tracking ----------
+
+/// A tracked stretch of time. `end_at = None` means the timer is running;
+/// it is written at start so a running timer survives restarts and crashes.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeEntry {
+    pub id: String,
+    pub task_id: Option<String>,
+    pub title: String,
+    /// Local "YYYY-MM-DDTHH:MM:SS".
+    pub start_at: String,
+    pub end_at: Option<String>,
+    /// "stopwatch" or "pomodoro".
+    pub mode: String,
+    pub target_min: Option<i64>,
+    pub note: String,
+}
+
+#[tauri::command]
+pub fn list_time_entries(state: State<AppState>) -> Result<Vec<TimeEntry>, String> {
+    let db = state.db.lock().unwrap();
+    let mut stmt = db
+        .prepare(
+            "SELECT id, task_id, title, start_at, end_at, mode, target_min, note
+             FROM time_entries ORDER BY start_at",
+        )
+        .str_err()?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(TimeEntry {
+                id: r.get(0)?,
+                task_id: r.get(1)?,
+                title: r.get(2)?,
+                start_at: r.get(3)?,
+                end_at: r.get(4)?,
+                mode: r.get(5)?,
+                target_min: r.get(6)?,
+                note: r.get(7)?,
+            })
+        })
+        .str_err()?;
+    rows.collect::<Result<_, _>>().str_err()
+}
+
+#[tauri::command]
+pub fn save_time_entry(state: State<AppState>, entry: TimeEntry) -> Result<(), String> {
+    let db = state.db.lock().unwrap();
+    db.execute(
+        "INSERT OR REPLACE INTO time_entries
+         (id, task_id, title, start_at, end_at, mode, target_min, note)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            entry.id, entry.task_id, entry.title, entry.start_at, entry.end_at, entry.mode,
+            entry.target_min, entry.note
+        ],
+    )
+    .str_err()?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_time_entry(state: State<AppState>, id: String) -> Result<(), String> {
+    let db = state.db.lock().unwrap();
+    db.execute("DELETE FROM time_entries WHERE id = ?1", [id]).str_err()?;
+    Ok(())
 }
 
 // ---------- activities ----------

@@ -1,6 +1,6 @@
 // Typed wrappers around the Rust commands registered in src-tauri/src/lib.rs.
 import { invoke } from "@tauri-apps/api/core";
-import type { Activity, Calendar, ExternalEvent, NoteMeta, Task, TaskList } from "./types";
+import type { Activity, Calendar, ExternalEvent, NoteMeta, Task, TaskList, TimeEntry } from "./types";
 
 export const api = {
   // settings
@@ -33,6 +33,11 @@ export const api = {
   trashFile: (path: string) => invoke<void>("trash_file", { path }),
   listSheets: () => invoke<NoteMeta[]>("list_sheets"),
   exportFile: (name: string, content: string) => invoke<string>("export_file", { name, content }),
+
+  // time tracking
+  listTimeEntries: () => invoke<TimeEntry[]>("list_time_entries"),
+  saveTimeEntry: (entry: TimeEntry) => invoke<void>("save_time_entry", { entry }),
+  deleteTimeEntry: (id: string) => invoke<void>("delete_time_entry", { id }),
 
   // training
   listActivities: () => invoke<Activity[]>("list_activities"),

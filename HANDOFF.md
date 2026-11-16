@@ -38,6 +38,7 @@ an optional news digest. All data stays on the user's computer. Open source
 | Notes | Working | File list, CodeMirror editor, preview, `[[wiki links]]` (click creates missing notes), backlinks, force graph, rename/move, trash to `.trash/` |
 | Tasks | Working | Lists, smart lists (Today / 7 days / All / Completed), tags, priority, attached note, date + start/end time, quick-add parser (`Maths homework mon 1pm-3pm #school !2`) |
 | Calendar | Working | Week (drag to move, drag bottom edge to resize, click to create) + Month views, all-day row, now-line, ICS subscriptions with RRULE expansion, `.ics` export |
+| Time tracking | Working (branch `feature/time-tracking`) | Stopwatch + pomodoro (25 min, chime, auto-stops even if the app was closed), one timer at a time, persisted at start; rail widget; start from task detail in Tasks or Calendar; "Plan + tracked" calendar strip (hatched = timer, dotted = workout); entry editor (times, note, overlapping workout); Tracked today list; <1 min sessions discarded; Garmin/FIT/manual activities count as tracked time |
 | Sheets | Working | Create / rename / trash, autosave, CSV import/export. Grid stays light in dark mode (canvas colours are hard-coded in the lib) |
 | Training | Working (needs real-data testing) | Activities table, TRIMP, ATL/CTL/TSB, monotony/strain, effective VO2max, race predictions, weekly volume by sport, manual logging, .FIT import, Garmin login/MFA/sync |
 | Digest | Experimental | RSS/Atom reader ranked by interest keywords |
@@ -66,6 +67,10 @@ Garmin sync additionally needs Python 3 on PATH (the app creates its own venv).
 
 The split is automatic (`DEV_BUILD = cfg!(debug_assertions)` in `src-tauri/src/lib.rs`), so dev experiments,
 schema changes and test data can never touch the installed copy's data.
+
+**UI-only testing in a browser:** `npm run dev` then open http://localhost:1420. Outside the desktop shell
+`src/lib/mockBackend.ts` answers commands with sample in-memory data (resets on reload; dev-only, never in
+the release bundle). Add new commands there when you add them to Rust.
 
 Git workflow: `main` stays releasable; do new work on a branch (`git switch -c feature/x`), merge when it
 works, then tag a release (`git tag v0.0.2`) and rebuild the installer from it. Installers land in
@@ -102,5 +107,7 @@ docs/                    DESIGN.md, ARCHITECTURE.md
 9. Tests: TS unit tests for `quickadd`, `ics`, `fitness` (add vitest).
 
 ## Session log (newest first)
+
+- **2026-11-16 - Time tracking (branch `feature/time-tracking`).** `time_entries` table + commands, `lib/timeStore.ts`, rail `TimerWidget`, `TaskTimer` in Tasks/Calendar, calendar tracked strip with workouts, entry/workout detail panels, browser mock backend. Verified: tsc, vite build, cargo tests, click-through in the browser mock (start pomodoro from calendar task, live countdown in rail, stop, short-session discard, workout detail, Tasks timer). Not yet verified in the native window. Next ideas: focus stats page (per day/tag/list), break timer after pomodoro, desktop notifications (tauri-plugin-notification), Garmin stress/Body Battery during focus sessions.
 
 - **2026-11-16 - Draft 0.** Toolchain installed (Node, Rust, MSVC Build Tools, gh). Full scaffold written: Rust backend (SQLite, vault I/O, FIT, Garmin bridge, fetch), React UI with all six modules. Verified: frontend typechecks + builds, Rust compiles with 3 passing unit tests, `tauri dev` launches and creates the vault (`Documents/VaultX/Welcome.md`) and DB; Garmin bridge protocol smoke-tested offline against garminconnect 0.3.20. **Not yet verified:** clicking through every module inside the native window, a real Garmin login, a real ICS feed. Published to https://github.com/Pulzair/vaultx. See CHANGELOG for detail.

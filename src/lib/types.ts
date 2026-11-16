@@ -54,6 +54,20 @@ export interface NoteMeta {
   links: string[];
 }
 
+export interface TimeEntry {
+  id: string;
+  taskId: string | null;
+  title: string;
+  /** Local "YYYY-MM-DDTHH:MM:SS" */
+  startAt: string;
+  /** null while the timer is running */
+  endAt: string | null;
+  mode: "stopwatch" | "pomodoro";
+  /** Pomodoro length in minutes */
+  targetMin: number | null;
+  note: string;
+}
+
 export interface Activity {
   id: string;
   source: string;

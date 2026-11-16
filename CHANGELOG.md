@@ -3,6 +3,14 @@
 All notable changes to VaultX. Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 The current build state and next steps are in [HANDOFF.md](HANDOFF.md).
 
+## [Unreleased]
+
+### Added
+- **Time tracking**: stopwatch and 25-minute pomodoro timers started from any task (Tasks or Calendar) or from the rail; running timer always visible and survives restarts; sessions under a minute are discarded.
+- Calendar "Plan + tracked" mode: actual time shown beside planned blocks, daily tracked totals in week and month views, a Tracked today list, and an editor for entries (times, note).
+- Garmin / .FIT / manual workouts appear on the calendar as tracked time, and timer entries show any overlapping workout.
+- Browser mock backend for UI work without the desktop shell (dev only).
+
 ## [0.0.1] - Draft 0 - 2026-11-16
 
 ### Added

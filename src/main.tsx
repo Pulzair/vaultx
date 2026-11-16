@@ -8,8 +8,16 @@ import "@fontsource/ibm-plex-mono/500.css";
 import "./styles/app.css";
 import App from "./App";
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
+async function boot() {
+  // Opened in a plain browser during development: use the in-memory backend.
+  if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window)) {
+    const { installMockBackend } = await import("./lib/mockBackend");
+    installMockBackend();
+  }
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>,
+  );
+}
+boot();

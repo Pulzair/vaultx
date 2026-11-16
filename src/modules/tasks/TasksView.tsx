@@ -4,6 +4,8 @@ import { askConfirm, askText } from "../../lib/dialog";
 import { addDays, hm, parseLocal, ymd } from "../../lib/dates";
 import { parseQuickAdd } from "../../lib/quickadd";
 import { newTask, type TaskStore } from "../../lib/taskStore";
+import type { TimeStore } from "../../lib/timeStore";
+import TaskTimer from "../../components/TaskTimer";
 import type { Task } from "../../lib/types";
 import "./tasks.css";
 
@@ -25,7 +27,7 @@ function taskDay(t: Task): string | null {
   return t.startAt ? t.startAt.slice(0, 10) : t.dueDate;
 }
 
-export default function TasksView({ store }: { store: TaskStore }) {
+export default function TasksView({ store, time }: { store: TaskStore; time: TimeStore }) {
   const { lists, tasks, saveTask, deleteTask, saveList, deleteList, error } = store;
   const [scope, setScope] = useState<Scope>({ kind: "smart", id: "today" });
   const [selected, setSelected] = useState<string | null>(null);
@@ -157,7 +159,7 @@ export default function TasksView({ store }: { store: TaskStore }) {
           )}
           <div className="scroll" style={{ flex: 1 }}>
             {visible.map((t) => (
-              <TaskRow key={t.id} t={t} active={t.id === selected} today={today}
+              <TaskRow key={t.id} t={t} active={t.id === selected} today={today} tracking={time.running?.taskId === t.id}
                 listName={scope.kind !== "list" ? lists.find((l) => l.id === t.listId)?.name : undefined}
                 onSelect={() => setSelected(t.id)} onToggle={() => toggle(t)} />
             ))}
@@ -167,7 +169,7 @@ export default function TasksView({ store }: { store: TaskStore }) {
 
         <div className="pane" style={{ width: 320, borderRight: 0 }}>
           {sel ? (
-            <TaskDetail key={sel.id} t={sel} store={store} onDelete={() => { deleteTask(sel.id); setSelected(null); }} />
+            <TaskDetail key={sel.id} t={sel} store={store} time={time} onDelete={() => { deleteTask(sel.id); setSelected(null); }} />
           ) : (
             <div className="empty">Select a task to see its details and note.</div>
           )}
@@ -189,10 +191,10 @@ function QuickPreview({ text }: { text: string }) {
 }
 
 function TaskRow(props: {
-  t: Task; active: boolean; today: string; listName?: string;
+  t: Task; active: boolean; today: string; listName?: string; tracking: boolean;
   onSelect: () => void; onToggle: () => void;
 }) {
-  const { t, active, today, listName, onSelect, onToggle } = props;
+  const { t, active, today, listName, tracking, onSelect, onToggle } = props;
   const day = taskDay(t);
   const overdue = !t.done && day && day < today;
   const when = t.startAt
@@ -204,6 +206,7 @@ function TaskRow(props: {
         onClick={(e) => { e.stopPropagation(); onToggle(); }} />
       <span className="prio" title={PRIORITY[t.priority]}>{"!".repeat(t.priority)}</span>
       <span className="title">{t.title || <span className="muted">Untitled</span>}</span>
+      {tracking && <span className="mono" style={{ color: "var(--accent)", fontSize: 11 }} title="Timer running">● rec</span>}
       {t.note && <span className="muted mono" title="Has a note">¶</span>}
       {t.tags.map((tag) => <span key={tag} className="tag">{tag}</span>)}
       {listName && <span className="muted" style={{ fontSize: 11.5 }}>{listName}</span>}
@@ -212,7 +215,7 @@ function TaskRow(props: {
   );
 }
 
-function TaskDetail({ t, store, onDelete }: { t: Task; store: TaskStore; onDelete: () => void }) {
+function TaskDetail({ t, store, time, onDelete }: { t: Task; store: TaskStore; time: TimeStore; onDelete: () => void }) {
   const { lists, saveTask } = store;
   const [draft, setDraft] = useState(t);
   const [tagText, setTagText] = useState(t.tags.join(", "));
@@ -271,6 +274,8 @@ function TaskDetail({ t, store, onDelete }: { t: Task; store: TaskStore; onDelet
           onChange={(e) => setTagText(e.target.value)}
           onBlur={() => update({ tags: [...new Set(tagText.split(",").map((s) => s.trim().replace(/^#/, "")).filter(Boolean))] })} />
       </div>
+      <div className="label" style={{ margin: "16px 0 6px" }}>Time tracking</div>
+      <TaskTimer task={draft} time={time} />
       <div className="label" style={{ margin: "16px 0 6px" }}>Note</div>
       <textarea className="textarea" rows={12} style={{ width: "100%", resize: "vertical", fontFamily: "var(--mono)", fontSize: 12.5 }}
         value={draft.note} placeholder="Markdown supported. Link vault notes with [[Note name]]."
